@@ -1,0 +1,199 @@
+{
+  "metadata": {
+    "project": "Synthetic Aircraft Requirements Dataset",
+    "purpose": "Demonstrate ARP4754A rule violations, including multi-requirement consistency issues",
+    "intentionally_non_compliant": true,
+    "version": "1.0"
+  },
+  "requirements": [
+    {
+      "req_id": "REQ-001",
+      "req_title": "Flight Control Response Speed",
+      "req_statement": "The Flight Control System shall respond rapidly to pilot inputs.",
+      "verification_method": null,
+      "rationale": "To ensure good handling qualities."
+    },
+    {
+      "req_id": "REQ-002",
+      "req_title": "Flight Control Response Time (Normal Mode)",
+      "req_statement": "The Flight Control System shall respond to pilot inputs within 20 ms in normal mode.",
+      "verification_method": "Test",
+      "rationale": "Derived from handling quality objectives."
+    },
+    {
+      "req_id": "REQ-003",
+      "req_title": "Minimum Flight Control Response Time",
+      "req_statement": "The Flight Control System shall not respond to pilot inputs in less than 30 ms in normal mode.",
+      "verification_method": "Test",
+      "rationale": "To avoid excessive control sensitivity."
+    },
+    {
+      "req_id": "REQ-004",
+      "req_title": "Flight Control Response Time",
+      "req_statement": "The Flight Control System shall respond to pilot inputs within 25 milliseconds.",
+      "verification_method": "Analysis",
+      "rationale": "To meet pilot expectations."
+    },
+    {
+      "req_id": "REQ-005",
+      "req_title": "Flight Control Reliability",
+      "req_statement": "The Flight Control System shall be highly reliable and robust under all conditions.",
+      "verification_method": null,
+      "rationale": "To improve overall system safety."
+    },
+    {
+      "req_id": "REQ-006",
+      "req_title": "Flight Control Implementation Architecture",
+      "req_statement": "The Flight Control System shall compute control laws and transmit actuator commands using a triple-redundant PowerPC architecture.",
+      "verification_method": "Inspection",
+      "rationale": "Based on previous aircraft designs."
+    },
+    {
+      "req_id": "REQ-007",
+      "req_title": "Autopilot Altitude Control",
+      "req_statement": "The Autopilot shall maintain altitude accurately.",
+      "verification_method": null,
+      "rationale": "Required for stable flight."
+    },
+    {
+      "req_id": "REQ-008",
+      "req_title": "Autopilot Altitude Accuracy (Imperial)",
+      "req_statement": "The Autopilot shall maintain altitude within ±50 ft during cruise flight.",
+      "verification_method": "Flight Test",
+      "rationale": "Customer requirement."
+    },
+    {
+      "req_id": "REQ-009",
+      "req_title": "Autopilot Altitude Accuracy (Metric)",
+      "req_statement": "The Autopilot shall maintain altitude within ±20 m during cruise flight.",
+      "verification_method": "Flight Test",
+      "rationale": "Derived requirement."
+    },
+    {
+      "req_id": "REQ-010",
+      "req_title": "Autopilot Altitude and Disconnection",
+      "req_statement": "The Autopilot shall maintain altitude within ±50 ft and shall disconnect automatically when sensor data is invalid.",
+      "verification_method": "Test",
+      "rationale": "To ensure safety and performance."
+    },
+    {
+      "req_id": "REQ-011",
+      "req_title": "Autopilot Automatic Disconnection",
+      "req_statement": "The Autopilot shall disconnect automatically when sensor data is invalid.",
+      "verification_method": "Test",
+      "rationale": "Safety requirement."
+    },
+    {
+      "req_id": "REQ-012",
+      "req_title": "Flight Control System Failure Classification",
+      "req_statement": "Loss of the Flight Control System shall be classified as Major.",
+      "verification_method": "Analysis",
+      "rationale": "Preliminary safety assessment."
+    },
+    {
+      "req_id": "REQ-013",
+      "req_title": "Flight Control System Failure Classification and DAL",
+      "req_statement": "Loss of the Flight Control System shall be classified as Catastrophic and assigned DAL A.",
+      "verification_method": "Safety Analysis",
+      "rationale": "Functional hazard assessment."
+    },
+    {
+      "req_id": "REQ-014",
+      "req_title": "Flight Control Safety Objectives",
+      "req_statement": "The Flight Control System shall meet its safety objectives.",
+      "verification_method": null,
+      "rationale": "Regulatory compliance."
+    },
+    {
+      "req_id": "REQ-015",
+      "req_title": "Actuator Command Update Rate",
+      "req_statement": "The Flight Control System shall update actuator commands every 10 ms.",
+      "verification_method": "Test",
+      "rationale": "Control loop stability."
+    },
+    {
+      "req_id": "REQ-016",
+      "req_title": "Actuator Command Update Rate",
+      "req_statement": "The Flight Control System shall update actuator commands every 15 ms.",
+      "verification_method": "Test",
+      "rationale": "Processor load considerations."
+    },
+    {
+      "req_id": "REQ-017",
+      "req_title": "Actuator Command Update Rate",
+      "req_statement": "The Flight Control System shall update actuator commands as required.",
+      "verification_method": null,
+      "rationale": "Flexibility in implementation."
+    },
+    {
+      "req_id": "REQ-018",
+      "req_title": "Flight Control / Autopilot Data Exchange",
+      "req_statement": "The Flight Control System shall exchange data with the Autopilot.",
+      "verification_method": "Inspection",
+      "rationale": "System integration."
+    },
+    {
+      "req_id": "REQ-019",
+      "req_title": "Flight Control / Autopilot Interface Protocol",
+      "req_statement": "The Flight Control System shall exchange data with the Autopilot using ARINC 429.",
+      "verification_method": "Inspection",
+      "rationale": "Legacy avionics compatibility."
+    },
+    {
+      "req_id": "REQ-020",
+      "req_title": "Flight Control / Autopilot Interface Protocol",
+      "req_statement": "The Flight Control System shall exchange data with the Autopilot using AFDX with a maximum latency of 5 ms.",
+      "verification_method": "Test",
+      "rationale": "High-performance data exchange."
+    },
+    {
+      "req_id": "REQ-021",
+      "req_title": "Environmental Operation",
+      "req_statement": "The Flight Control System shall operate correctly.",
+      "verification_method": null,
+      "rationale": "Normal operational expectations."
+    },
+    {
+      "req_id": "REQ-022",
+      "req_title": "Environmental Temperature Range",
+      "req_statement": "The Flight Control System shall operate correctly between −40°C and +70°C.",
+      "verification_method": "Environmental Test",
+      "rationale": "Environmental qualification."
+    },
+    {
+      "req_id": "REQ-023",
+      "req_title": "Regulatory Compliance",
+      "req_statement": "The Flight Control System shall comply with all applicable regulations.",
+      "verification_method": null,
+      "rationale": "Certification requirement."
+    },
+    {
+      "req_id": "REQ-024",
+      "req_title": "Flight Envelope Protection",
+      "req_statement": "The Flight Control System shall provide flight envelope protection.",
+      "verification_method": "Analysis",
+      "rationale": "Derived from safety objectives."
+    },
+    {
+      "req_id": "REQ-025",
+      "req_title": "Pitch Rate Limitation",
+      "req_statement": "The Flight Control System shall limit pitch rate to 5 deg/s.",
+      "verification_method": "Test",
+      "rationale": "Handling qualities."
+    },
+    {
+      "req_id": "REQ-026",
+      "req_title": "Pitch Rate Limitation",
+      "req_statement": "The Flight Control System shall limit pitch rate to 5 deg/s.",
+      "verification_method": "Test",
+      "rationale": "Duplicate requirement."
+    },
+    {
+      "req_id": "REQ-027",
+      "req_title": "Pitch Rate Limitation (Software)",
+      "req_statement": "The Flight Control System software shall limit pitch rate to 5 deg/s.",
+      "verification_method": "Test",
+      "rationale": "Software allocation."
+    }
+  ]
+}

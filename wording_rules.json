@@ -1,0 +1,87 @@
+{
+  "wording_bad_practices": {
+    "performance_speed": [
+      "fast",
+      "slow",
+      "quickly",
+      "soon"
+    ],
+    "quantitative_approximation": [
+      "approximately",
+      "about",
+      "around",
+      "roughly"
+    ],
+    "vague_quantification": [
+      "adequate",
+      "sufficient"
+    ],
+    "conditional_applicability": [
+      "as required",
+      "if applicable",
+      "where necessary",
+      "when needed"
+    ],
+    "subjective_quality_judgment": [
+      "good",
+      "bad",
+      "better",
+      "best",
+      "optimal",
+      "acceptable",
+      "reasonable"
+    ],
+    "performance_attributes": [
+      "reliable",
+      "robust",
+      "flexible",
+      "efficient"
+    ],
+    "usability_attributes": [
+      "user-friendly",
+      "intuitive"
+    ],
+    "optimization_terms": [
+      "minimize",
+      "maximize"
+    ],
+    "state_classification": [
+      "normal",
+      "abnormal"
+    ]
+  },
+  "sentence_morphology_bad_practices": {
+    "negation_issues": {
+      "double_negation": "Use of two negations in the same clause (e.g., 'shall not be inactive').",
+      "hidden_negation": "Negative meaning expressed implicitly (e.g., 'unless otherwise specified').",
+      "negative_requirement": "Requirement expressed in negative form instead of positive measurable behavior."
+    },
+    "structural_complexity": {
+      "long_sentences": "Sentences exceeding recommended length (e.g., >25-30 words).",
+      "multiple_subordinate_clauses": "Stacked dependent clauses increasing cognitive load.",
+      "nested_conditions": "Multiple embedded if/when/while structures.",
+      "compound_requirements": "Several requirements combined using 'and/or'."
+    },
+    "ambiguity_prone_structures": {
+      "ambiguous_pronouns": "Use of 'it', 'this', 'that', 'they' without clear antecedent.",
+      "unclear_references": "References like 'the system' when multiple systems exist.",
+      "dangling_modifiers": "Modifier not clearly attached to a subject."
+    },
+    "passive_voice": {
+      "agentless_passive": "Passive form without specifying the responsible entity."
+    },
+    "modality_issues": {
+      "mixed_modal_verbs": "Combination of 'shall', 'should', 'may', 'can' in the same requirement.",
+      "weak_modals": "Use of 'should', 'may', 'can' instead of mandatory 'shall'."
+    },
+    "logical_issues": {
+      "and_or_combination": "Use of 'and/or'.",
+      "implicit_conditions": "Conditions not explicitly introduced by 'if' or 'when'.",
+      "temporal_ambiguity": "Unclear sequence of events."
+    },
+    "vagueness_in_structure": {
+      "open_ended_lists": "Use of 'etc.', 'including but not limited to'.",
+      "ellipsis_or_incomplete_sentences": "Sentence fragments."
+    }
+  }
+}

@@ -1,0 +1,26 @@
+# Core LangChain stack
+langchain>=0.2.0
+langchain-openai>=0.1.0        # used when LLM_PROVIDER=openai
+langchain-ollama>=0.1.0        # used when LLM_PROVIDER=ollama
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langgraph>=0.1.0
+
+# OpenAI client (only needed when LLM_PROVIDER=openai)
+openai>=1.30.0
+
+# Vector store
+faiss-cpu>=1.7.4
+
+# Document loaders (RAG ingestion)
+pypdf>=4.0.0
+docx2txt>=0.8
+
+# HTTP client (used by Ollama embedding calls)
+requests>=2.31.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+rich>=13.0.0
+typer>=0.12.0

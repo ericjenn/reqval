@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "project": "Synthetic Aircraft Requirements Dataset",
+    "purpose": "Demonstrate ARP4754A rule violations, including multi-requirement consistency issues",
+    "intentionally_non_compliant": true,
+    "version": "1.0"
+  },
+  "requirements": [
+    {
+      "req_id": "REQ-001",
+      "req_title": "Flight Control Response Speed",
+      "req_statement": "The Flight Control System shall respond rapidly to pilot inputs.",
+      "verification_method": null,
+      "rationale": "To ensure good handling qualities."
+    },
+    {
+      "req_id": "REQ-002",
+      "req_title": "Flight Control Response Time (Normal Mode)",
+      "req_statement": "The Flight Control System shall respond to pilot inputs within 20 ms in normal mode.",
+      "verification_method": "Test",
+      "rationale": "Derived from handling quality objectives."
+    }
+  ]
+}
