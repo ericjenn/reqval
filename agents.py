@@ -24,10 +24,17 @@ from langgraph.graph.message import add_messages
 
 from arp4754_rules import (
     format_rules_for_prompt,
+    format_wording_for_prompt,
+    format_ears_for_prompt,
     get_rules,
     blocking_rules,
     AMBIGUOUS_TERMS,
+    AMBIGUOUS_TERMS_BY_CAT,
     WEAK_MODAL_VERBS,
+    FORBIDDEN_PATTERNS,
+    SENTENCE_MORPHOLOGY,
+    MANDATORY_MODAL_VERB,
+    EARS_PATTERNS,
     DAL_LEVELS,
     STANDARD,
     VERSION,
@@ -352,7 +359,7 @@ def completeness_agent(state: ValidationState) -> ValidationState:
     print("  [Completeness]")
     llm        = get_llm()
     rules_text = format_rules_for_prompt("completeness")
-    ambiguous  = ", ".join(AMBIGUOUS_TERMS)
+    wording    = format_wording_for_prompt()
     rag_ctx    = _rag_block(
         "system functions safety requirements interface definitions "
         "environmental conditions acceptance criteria test methods", k=5
@@ -365,7 +372,7 @@ def completeness_agent(state: ValidationState) -> ValidationState:
 COMPLETENESS RULES (from rules.json):
 {rules_text}
 
-AMBIGUOUS TERMS TO DETECT: {ambiguous}
+{wording}
 {rag_ctx}
 {_sys_ctx(state)}
 
@@ -389,7 +396,8 @@ OUTPUT FORMAT per requirement:
   REQ-C08 [SEVERITY] ✓/✗  — [explanation]
   REQ-C09 [SEVERITY] ✓/✗  — [explanation]
   REQ-C10 [SEVERITY] ✓/✗  — [explanation]
-  Ambiguous terms found: [list or "none"]
+  Ambiguous terms found: [list with category, e.g. "fast [performance_speed]", or "none"]
+  Morphology issues: [list MORPHOLOGY bad-practice findings, or "none"]
   Score: XX/100
 ─────────────────────────────────────────────────
 
@@ -601,7 +609,7 @@ def correctness_agent(state: ValidationState) -> ValidationState:
     print("  [Correctness]")
     llm        = get_llm()
     rules_text = format_rules_for_prompt("correctness")
-    weak_verbs = ", ".join(WEAK_MODAL_VERBS)
+    wording    = format_wording_for_prompt()
     rag_ctx    = _rag_block(
         "system functions capabilities what the system does operational modes "
         "design decisions assumptions constraints", k=5
@@ -614,8 +622,7 @@ def correctness_agent(state: ValidationState) -> ValidationState:
 CORRECTNESS RULES (from rules.json):
 {rules_text}
 
-WEAK MODAL VERBS (flag these — not mandatory): {weak_verbs}
-REQUIRED MANDATORY VERB: "shall"
+{wording}
 {rag_ctx}
 {_sys_ctx(state)}
 
@@ -626,8 +633,19 @@ INSTRUCTIONS — for EACH requirement, execute every check step:
 4. REQ-R04: detect compound requirements — count distinct "shall" obligations.
 5. REQ-R05: assess abstraction level relative to system hierarchy.
 6. REQ-R06: detect implicit assumptions; verify they are explicitly stated.
-7. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
-8. Give a per-requirement correctness score (0-100%).
+7. WORDING — check all AMBIGUOUS TERMS categories for forbidden vocabulary.
+8. MORPHOLOGY — for each sentence, check all bad-practice categories from the
+   SENTENCE MORPHOLOGY section above:
+     negation_issues          (double/hidden negation, negative form)
+     structural_complexity    (long sentences >30 words, compound, nested conditions)
+     ambiguity_prone_structures (ambiguous pronouns, unclear references)
+     passive_voice            (agentless passive)
+     modality_issues          (mixed modals, weak modals)
+     logical_issues           (and/or, implicit conditions, temporal ambiguity)
+     vagueness_in_structure   (etc., open-ended lists, fragments)
+9. STRUCTURAL RULES — apply WORD-S01 through WORD-S06 checks.
+10. State PASSES (✓) or FAILS (✗) with failure_severity per rule/check.
+11. Give a per-requirement correctness score (0-100%).
 
 OUTPUT FORMAT per requirement:
 ─────────────────────────────────────────────────
@@ -639,6 +657,16 @@ OUTPUT FORMAT per requirement:
   REQ-R04 [SEVERITY] ✓/✗  — [N obligations found]
   REQ-R05 [SEVERITY] ✓/✗  — [abstraction assessment]
   REQ-R06 [SEVERITY] ✓/✗  — [implicit assumptions found or none]
+  WORDING [SEVERITY] ✓/✗  — [ambiguous terms found: list, or "none"]
+  MORPHOLOGY:
+    negation_issues          ✓/✗  — [finding or "none"]
+    structural_complexity    ✓/✗  — [finding or "none"]
+    ambiguity_prone_structures ✓/✗ — [finding or "none"]
+    passive_voice            ✓/✗  — [finding or "none"]
+    modality_issues          ✓/✗  — [finding or "none"]
+    logical_issues           ✓/✗  — [finding or "none"]
+    vagueness_in_structure   ✓/✗  — [finding or "none"]
+  STRUCTURAL (WORD-S01–S06): [pass/fail summary per rule]
   Score: XX/100
 ─────────────────────────────────────────────────
 
@@ -688,22 +716,65 @@ def recommender_agent(state: ValidationState) -> ValidationState:
         f"=== MULTI-REQUIREMENT ANALYSIS ===\n{state.get('multi_req_findings', '')}"
     )
 
+    ears_ref    = format_ears_for_prompt()
+    wording_ref = format_wording_for_prompt()
+
     system_prompt = f"""You are a senior aerospace requirements engineer rewriting
 non-compliant requirements to conform to {STANDARD} (v{VERSION}).
 
 COMPLETE RULES REFERENCE (rule_id [severity] title: check steps):
 {rules_ref}
 
-REWRITING RULES:
-- Use "shall" for every mandatory statement                          (fixes REQ-R03)
-- One obligation per requirement; split compound ones               (fixes REQ-R04)
-- Replace all ambiguous/subjective terms with measurable values     (fixes REQ-C02, REQ-V02, REQ-V03)
-- State WHAT the system shall achieve, not HOW                      (fixes REQ-R02)
-- Include units AND tolerances for all performance values           (fixes REQ-V02)
-- Reference the DAL level for safety-critical requirements          (fixes REQ-C05)
-- Add [Verification: T/A/I/D] tag to each rewritten statement      (fixes REQ-V04)
-- Use exact terminology and numeric values from RAG project docs    (vocabulary consistency)
-- Make implicit assumptions explicit                                (fixes REQ-R06)
+{wording_ref}
+
+{ears_ref}
+
+REWRITING RULES — apply ALL of the following:
+
+1. EARS PATTERN SELECTION — choose the most appropriate pattern for every rewrite:
+   • No trigger, state, or condition present → Ubiquitous
+     Template: The <system name> shall <system response>.
+   • Discrete event or stimulus              → Event-Driven  (WHEN)
+     Template: WHEN <trigger> [<precondition>], the <system name> shall <system response>.
+   • Fault, failure, or off-nominal event    → Unwanted Behavior  (IF … THEN)
+     Template: IF <unwanted condition>, THEN the <system name> shall <system response>.
+   • Continuous operating state or mode      → State-Driven  (WHILE)
+     Template: WHILE <system state>, the <system name> shall <system response>.
+   • Optional feature or configuration       → Optional Feature  (WHERE)
+     Template: WHERE <feature is included>, the <system name> shall <system response>.
+   • Multiple triggers / states              → Complex  (combinations)
+   IMPORTANT: Do NOT default to Ubiquitous when a trigger, state, fault scenario,
+   or applicability condition is present or clearly implied in the original text.
+
+2. MODAL VERB — use "shall" for every binding obligation (fixes REQ-R03, WORD weak_modals).
+
+3. ONE OBLIGATION PER STATEMENT — split compound requirements into separate -A, -B, …
+   statements, each with its own EARS pattern (fixes REQ-R04, WORD-S01).
+
+4. MEASURABLE CRITERIA — replace every ambiguous or vague term with a numeric
+   value + unit + tolerance. Remove all terms from the AMBIGUOUS TERMS categories
+   (fixes REQ-C02, REQ-V02, REQ-V03).
+
+5. SENTENCE MORPHOLOGY — fix all structural defects:
+   • Positive obligation — rewrite negative requirements in positive form
+   • No double/hidden negation — eliminate "not inactive", "unless", etc. (WORD-S04)
+   • Active voice — "<Subject> shall <verb> <object>" (WORD-S02)
+   • Explicit named subject — no "it", "this", "they" (WORD-S03, WORD-S05)
+   • No ambiguous pronouns — replace with the explicit referent
+   • Sentence ≤30 words — split or restructure if longer (WORD-S06)
+   • No open-ended lists — replace "etc.", "including but not limited to"
+
+6. WHAT NOT HOW — state the required behaviour, not the implementation (fixes REQ-R02).
+
+7. PERFORMANCE VALUES — include numeric value + unit + tolerance for every
+   performance criterion (fixes REQ-V02, REQ-K03).
+
+8. SAFETY — reference the DAL level for safety-critical requirements (fixes REQ-C05).
+
+9. VERIFICATION — append [Verification: Test/Analysis/Inspection/Demonstration]
+   to each rewritten statement (fixes REQ-V04).
+
+10. VOCABULARY — use exact terminology and numeric values from RAG project documents.
 
 OUTPUT FORMAT — one block per requirement:
 
@@ -714,23 +785,25 @@ REQUIREMENT: [ID]
 ORIGINAL:
   [verbatim original text]
 
+EARS PATTERN SELECTED: [pattern name] — [one-sentence justification]
+
 VIOLATIONS:
-  • [REQ-Xxx] [SEVERITY] — [one-line description of the violation and which check failed]
+  • [REQ-Xxx / WORD-Sxx] [SEVERITY] — [violation description + check that failed]
 
 CORRECTED REWRITE:
-  (split into -A, -B, ... if compound)
-  [ID]: [rewritten statement] [Verification: T/A/I/D]
+  [ID][-A/-B/…]: [EARS-structured rewritten statement] [Verification: T/A/I/D]
 
 CHANGES EXPLAINED:
-  • "[original wording]" → "[new wording]"  (fixes REQ-Xxx: [check step that was failing])
+  • "[original wording]" → "[new wording]"  (fixes [rule_id]: [check step])
 
 RAG VOCABULARY USED:
-  • [term or value sourced from project documents, or "none"]
+  • [term or value from project documents, or "none"]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If a requirement is fully compliant across ALL rules, write exactly:
-✓ [ID]: COMPLIANT — no rewrite needed."""
+If a requirement is fully compliant across ALL rules AND already follows
+an EARS pattern correctly, write exactly:
+✓ [ID]: COMPLIANT — [EARS pattern name] pattern already applied."""
 
     parts = []
     for req in state["requirements"]:

@@ -52,6 +52,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from arp4754_rules import WEAK_MODAL_VERBS, MANDATORY_MODAL_VERB
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,10 @@ _VM_ALIASES: Dict[str, str] = {
 }
 
 _DAL_RE      = re.compile(r"\bDAL[-\s]?[A-E]\b", re.IGNORECASE)
-_MODAL_RE    = re.compile(r"\b(shall|should|must|may|might|could|will)\b", re.IGNORECASE)
+# Modal verb regex built from wording_rules.json at import time
+_all_modals  = [MANDATORY_MODAL_VERB] + WEAK_MODAL_VERBS
+_modal_alts  = "|".join(re.escape(v) for v in sorted(_all_modals, key=len, reverse=True))
+_MODAL_RE    = re.compile(rf"\b({_modal_alts})\b", re.IGNORECASE)
 
 # ── JSON field names accepted as synonyms ─────────────────────────────────────
 # Allows the loader to handle minor field-name variants without breaking.
