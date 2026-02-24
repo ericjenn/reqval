@@ -1,36 +1,47 @@
 """
-ARP4754A Validation Rules — loaded from rules.json + wording_rules.json
-=========================================================================
-Single source of truth for all validation and wording rules.
+ARP4754A Validation Rules — single source of truth: rules.json
+===============================================================
+All validation rules (ARP4754A analysis + wording + morphology) live in
+rules.json v3.0. This module loads that file once and exposes all constants
+and helper functions consumed by agents.py.
 
-From rules.json
-───────────────
-  RULESETS, STANDARD, VERSION, PURPOSE
-  get_rules(cat), format_rules_for_prompt(cat), blocking_rules(cat), …
+Public API (unchanged — agents.py requires no modification)
+───────────────────────────────────────────────────────────
+Constants
+  STANDARD, VERSION, PURPOSE          str
+  RULESETS                            list[dict]
+  MANDATORY_MODAL_VERB                str
+  WEAK_MODAL_VERBS                    list[str]   from RULE-R03 checks
+  AMBIGUOUS_TERMS                     list[str]   flat, from RULE-C02 checks
+  AMBIGUOUS_TERMS_BY_CAT              dict        {cat_name: {severity, note, terms}}
+  FORBIDDEN_PATTERNS                  list[dict]  [{pattern, severity, note}]
+  SENTENCE_MORPHOLOGY                 dict        {cat: {severity, issues}}
+  STRUCTURAL_RULES                    list[dict]  [{rule_id, title, check, severity, …}]
+  EARS_PATTERNS                       list[dict]
+  DAL_LEVELS                          dict
 
-From wording_rules.json
-───────────────────────
-  MANDATORY_MODAL_VERB       str
-  WEAK_MODAL_VERBS           list[str]
-  AMBIGUOUS_TERMS            list[str]          flat, for quick membership tests
-  AMBIGUOUS_TERMS_BY_CAT     dict[str, dict]    categorised, with severity + note
-  FORBIDDEN_PATTERNS         list[dict]         {pattern, severity, category, note}
-  SENTENCE_MORPHOLOGY        dict               bad-practice taxonomy by category
-  STRUCTURAL_RULES           list[dict]         explicit rule_id entries
-  EARS_PATTERNS              list[dict]         EARS rewriting templates
-  DAL_LEVELS                 dict
-
-  format_wording_for_prompt()  → str   full wording block for analysis agents
-  format_ears_for_prompt()     → str   EARS patterns block for recommender agent
+Functions
+  get_ruleset(category)               → dict | None
+  get_rules(category)                 → list[dict]
+  format_rules_for_prompt(cat)        → str
+  format_all_rules_for_prompt()       → str
+  format_wording_for_prompt()         → str
+  format_ears_for_prompt()            → str
+  blocking_rules(category)            → list[dict]
+  rules_by_severity(cat, sev)         → list[dict]
+  severity_order(sev)                 → int
+  all_rule_ids()                      → list[str]
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import List, Optional
 
 # ── Load rules.json ───────────────────────────────────────────────────────────
+
 _RULES_PATH = Path(__file__).parent / "rules.json"
 if not _RULES_PATH.exists():
     raise FileNotFoundError(
@@ -40,63 +51,22 @@ if not _RULES_PATH.exists():
 with open(_RULES_PATH, encoding="utf-8") as _fh:
     _RAW = json.load(_fh)
 
-STANDARD  : str  = _RAW.get("standard", "ARP4754A")
-PURPOSE   : str  = _RAW.get("purpose",  "System Requirements Validation")
-VERSION   : str  = _RAW.get("version",  "1.0")
-RULESETS  : list = _RAW.get("rulesets", [])
+# ── Top-level metadata ────────────────────────────────────────────────────────
+
+STANDARD : str  = _RAW.get("standard", "ARP4754A")
+PURPOSE  : str  = _RAW.get("purpose",  "System Requirements Validation")
+VERSION  : str  = _RAW.get("version",  "3.0")
+RULESETS : list = _RAW.get("rulesets", [])
+
 _RULESET_BY_CATEGORY: dict = {rs["category"]: rs for rs in RULESETS}
 
-# ── Load wording_rules.json ───────────────────────────────────────────────────
-_WORDING_PATH = Path(__file__).parent / "wording_rules.json"
-if not _WORDING_PATH.exists():
-    raise FileNotFoundError(
-        f"wording_rules.json not found at {_WORDING_PATH}. "
-        "Place wording_rules.json in the same directory as arp4754_rules.py."
-    )
-with open(_WORDING_PATH, encoding="utf-8") as _wfh:
-    _WORDING = json.load(_wfh)
+# ── Modal verb ────────────────────────────────────────────────────────────────
 
-# ── Modal verb constants ──────────────────────────────────────────────────────
-MANDATORY_MODAL_VERB: str = _WORDING.get("mandatory_modal_verb", {}).get("verb", "shall")
+MANDATORY_MODAL_VERB: str = _RAW.get("mandatory_modal_verb", {}).get("verb", "shall")
 
-WEAK_MODAL_VERBS: List[str] = [
-    e["verb"] for e in _WORDING.get("weak_modal_verbs", {}).get("verbs", [])
-]
-
-# ── Ambiguous terms ───────────────────────────────────────────────────────────
-# Categorised dict (with severity + note per category) — for rich prompt injection
-AMBIGUOUS_TERMS_BY_CAT: dict = _WORDING.get("ambiguous_terms", {}).get("categories", {})
-
-# Flat list — for quick membership tests and backward-compatible agent usage
-AMBIGUOUS_TERMS: List[str] = [
-    term
-    for cat in AMBIGUOUS_TERMS_BY_CAT.values()
-    for term in cat.get("terms", [])
-]
-
-# ── Forbidden patterns ────────────────────────────────────────────────────────
-FORBIDDEN_PATTERNS: List[dict] = _WORDING.get("forbidden_patterns", {}).get("patterns", [])
-
-# ── Sentence morphology bad practices ────────────────────────────────────────
-SENTENCE_MORPHOLOGY: dict = _WORDING.get("sentence_morphology_bad_practices", {}).get("categories", {})
-
-# ── Structural rules (rule_id keyed) ─────────────────────────────────────────
-STRUCTURAL_RULES: List[dict] = _WORDING.get("structural_rules", {}).get("rules", [])
-
-# ── EARS patterns ─────────────────────────────────────────────────────────────
-EARS_PATTERNS: List[dict] = _WORDING.get("ears_patterns", {}).get("patterns", [])
-
-# ── DAL levels ────────────────────────────────────────────────────────────────
-DAL_LEVELS = {
-    "A": "Catastrophic — Loss of aircraft or multiple fatalities",
-    "B": "Hazardous — Large reduction in safety margins, crew distress",
-    "C": "Major — Significant reduction in safety margins",
-    "D": "Minor — Slight reduction in safety margins",
-    "E": "No safety effect",
-}
-
-
-# ── rules.json accessors ──────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Core accessors — defined BEFORE extraction helpers so get_rules() is usable
+# ─────────────────────────────────────────────────────────────────────────────
 
 def get_ruleset(category: str) -> Optional[dict]:
     return _RULESET_BY_CATEGORY.get(category)
@@ -106,12 +76,14 @@ def get_rules(category: str) -> List[dict]:
     return rs["rules"] if rs else []
 
 def format_rules_for_prompt(category: str) -> str:
+    """Return a structured prompt block for the given category's ruleset."""
     rs = get_ruleset(category)
     if not rs:
         return ""
-    section = rs.get("arp4754a_section", "?")
-    desc    = rs.get("description", category)
-    lines   = [f"ARP4754A §{section} — {desc}\n"]
+    origin = rs.get("origin", "")
+    desc   = rs.get("description", category)
+    header = f"{origin} — {desc}" if origin else desc
+    lines  = [header + "\n"]
     for rule in rs.get("rules", []):
         rid      = rule.get("rule_id", "???")
         title    = rule.get("title", "")
@@ -143,78 +115,238 @@ def all_rule_ids() -> List[str]:
     return [r["rule_id"] for rs in RULESETS for r in rs.get("rules", [])]
 
 
-# ── Wording prompt formatters ─────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Extraction helpers — run after get_rules() is defined
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_weak_modals() -> List[str]:
+    """
+    Extract weak modal verbs from RULE-R03 check steps.
+    Each relevant line is indented and has the form "  verb — note".
+    """
+    result = []
+    for rule in get_rules("correctness"):
+        if rule.get("rule_id") == "RULE-R03":
+            for chk in rule.get("checks", []):
+                # Lines like "  should      — recommendation, not obligation"
+                m = re.match(r"^\s{2,6}(\S+(?:\s+\S+)*?)\s+—\s+", chk)
+                if m:
+                    result.append(m.group(1).strip())
+            break
+    return result
+
+
+def _extract_ambiguous_terms() -> tuple[dict, List[str]]:
+    """
+    Extract ambiguous term categories from RULE-C02 check steps.
+    Each relevant line has the form:
+      [category_name / SEVERITY] term1, term2, … — note
+    """
+    by_cat: dict     = {}
+    flat: List[str]  = []
+    for rule in get_rules("completeness"):
+        if rule.get("rule_id") == "RULE-C02":
+            for chk in rule.get("checks", []):
+                m = re.match(
+                    r"^\[([^/\]]+)\s*/\s*(\w+)\]\s+(.+?)\s+—\s+(.+)$", chk
+                )
+                if not m:
+                    continue
+                cat_name = m.group(1).strip().replace(" ", "_")
+                severity = m.group(2).strip()
+                terms    = [t.strip() for t in m.group(3).split(",") if t.strip()]
+                note     = m.group(4).strip()
+                by_cat[cat_name] = {"severity": severity, "note": note, "terms": terms}
+                flat.extend(terms)
+            break
+    return by_cat, flat
+
+
+def _extract_forbidden_patterns() -> List[dict]:
+    """
+    Forbidden patterns come from two sources:
+      • RULE-W01/W02: TBD, TBC — extracted from first check step
+      • RULE-M07 [open_ended_lists]: etc., etc, including but not limited to,
+        and/or — extracted from the tagged check step
+    """
+    result = []
+
+    # TBD / TBC
+    for rule in get_rules("wording"):
+        checks = rule.get("checks", [])
+        pm = re.search(r"'([^']+)'", checks[0]) if checks else None
+        if pm:
+            result.append({
+                "pattern":  pm.group(1),
+                "severity": rule.get("failure_severity", "BLOCKING"),
+                "note":     checks[1] if len(checks) > 1 else "",
+            })
+
+    # open_ended_lists patterns from RULE-M07
+    for rule in get_rules("morphology"):
+        if rule.get("rule_id") == "RULE-M07":
+            for chk in rule.get("checks", []):
+                if "[open_ended_lists]" not in chk:
+                    continue
+                # Extract all single-quoted tokens
+                patterns = re.findall(r"'([^']+)'", chk)
+                note_part = chk.split("—")[-1].strip() if "—" in chk else chk
+                for pat in patterns:
+                    result.append({
+                        "pattern":  pat,
+                        "severity": rule.get("failure_severity", "HIGH"),
+                        "note":     note_part,
+                    })
+            break
+
+    return result
+
+
+def _extract_sentence_morphology() -> dict:
+    """
+    Build {category_name: {severity, issues: {tag: description}}} from
+    morphology rules RULE-M01..RULE-M07 (not M08 which is sentence length).
+    Each check step starting with [tag] contributes one issue entry.
+    """
+    result  = {}
+    tag_re  = re.compile(r"^\[([^\]]+)\]\s+(.+)$")
+    for rule in get_rules("morphology"):
+        rid = rule.get("rule_id", "")
+        if rid == "RULE-M08":
+            continue
+        cat_name = rule.get("title", rid).lower().replace(" ", "_")
+        severity = rule.get("failure_severity", "MEDIUM")
+        issues   = {}
+        for chk in rule.get("checks", []):
+            m = tag_re.match(chk.strip())
+            if m:
+                issues[m.group(1)] = m.group(2)
+        if issues:
+            result[cat_name] = {"severity": severity, "issues": issues}
+    return result
+
+
+def _extract_structural_rules() -> List[dict]:
+    """
+    Expose RULE-M08 (sentence length) in the legacy STRUCTURAL_RULES shape
+    for backward-compatible callers.
+    """
+    result = []
+    for rule in get_rules("morphology"):
+        if rule.get("rule_id") == "RULE-M08":
+            checks = rule.get("checks", [])
+            result.append({
+                "rule_id":    rule["rule_id"],
+                "title":      rule.get("title", ""),
+                "check":      checks[0] if checks else "",
+                "severity":   rule.get("failure_severity", "MEDIUM"),
+                "note":       rule.get("objective", ""),
+                "threshold":  30,
+                "comparison": "gt",
+            })
+    return result
+
+
+# ── EARS patterns ─────────────────────────────────────────────────────────────
+
+_EARS_SECTION  = _RAW.get("ears_patterns", {})
+EARS_PATTERNS: List[dict] = _EARS_SECTION.get("patterns", [])
+
+# ── DAL levels ────────────────────────────────────────────────────────────────
+
+DAL_LEVELS = {
+    "A": "Catastrophic — Loss of aircraft or multiple fatalities",
+    "B": "Hazardous — Large reduction in safety margins, crew distress",
+    "C": "Major — Significant reduction in safety margins",
+    "D": "Minor — Slight reduction in safety margins",
+    "E": "No safety effect",
+}
+
+# ── Derived constants (populated after all helpers are defined) ───────────────
+
+WEAK_MODAL_VERBS:      List[str]  = _extract_weak_modals()
+AMBIGUOUS_TERMS_BY_CAT, AMBIGUOUS_TERMS = _extract_ambiguous_terms()
+FORBIDDEN_PATTERNS:    List[dict] = _extract_forbidden_patterns()
+SENTENCE_MORPHOLOGY:   dict       = _extract_sentence_morphology()
+STRUCTURAL_RULES:      List[dict] = _extract_structural_rules()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Prompt formatters
+# ═════════════════════════════════════════════════════════════════════════════
 
 def format_wording_for_prompt() -> str:
     """
-    Full wording & morphology block for injection into analysis agent prompts
-    (completeness, correctness). Covers all sections of wording_rules.json.
+    Full wording & morphology block for injection into agent prompts.
+    Sections: weak modals, ambiguous terms, forbidden patterns,
+    morphology rules, sentence length.
     """
     lines = [
-        "WORDING & MORPHOLOGY RULES (wording_rules.json v"
-        + _WORDING.get("version", "?") + ")",
+        f"WORDING & MORPHOLOGY RULES (rules.json v{VERSION})",
         "═" * 65,
         f'MANDATORY MODAL VERB: "{MANDATORY_MODAL_VERB}" — all binding obligations.',
         "",
     ]
 
-    # ── Weak modals ──
-    lines.append("WEAK MODAL VERBS — flag as REQ-R03 [LOW]:")
-    for e in _WORDING.get("weak_modal_verbs", {}).get("verbs", []):
-        lines.append(f"  • {e['verb']:<24} {e.get('note', '')}")
+    # ── Weak modals (RULE-R03) ────────────────────────────────────────────
+    lines.append("WEAK MODAL VERBS (RULE-R03) — replace with 'shall' for binding obligations:")
+    for rule in get_rules("correctness"):
+        if rule["rule_id"] == "RULE-R03":
+            for chk in rule.get("checks", []):
+                if re.match(r"^\s{2,6}\S", chk):
+                    lines.append(f"  •{chk}")
+            break
     lines.append("")
 
-    # ── Ambiguous terms by category ──
-    lines.append("AMBIGUOUS / UNVERIFIABLE TERMS — flag as REQ-C02, REQ-V02, REQ-V03 [HIGH]:")
+    # ── Ambiguous terms (RULE-C02) ────────────────────────────────────────
+    lines.append("AMBIGUOUS / UNVERIFIABLE TERMS (RULE-C02) — flag with category and remediation:")
     for cat_name, cat in AMBIGUOUS_TERMS_BY_CAT.items():
-        sev   = cat.get("severity", "HIGH")
-        note  = cat.get("note", "")
         terms = ", ".join(cat.get("terms", []))
-        lines.append(f"  [{cat_name}] [{sev}]  {terms}")
-        lines.append(f"    → {note}")
+        lines.append(f"  [{cat_name} / {cat['severity']}]  {terms}")
+        lines.append(f"    → {cat['note']}")
     lines.append("")
 
-    # ── Forbidden patterns ──
-    lines.append("FORBIDDEN PATTERNS — always flag regardless of context:")
+    # ── Forbidden patterns (RULE-W01/W02, RULE-M07) ───────────────────────
+    lines.append("FORBIDDEN PATTERNS (RULE-W01/W02, RULE-M07) — always flag, unconditionally:")
     for p in FORBIDDEN_PATTERNS:
-        sev = p.get("severity", "HIGH")
-        lines.append(f"  • {p['pattern']:<28} [{sev}]  {p.get('note', '')}")
+        lines.append(f"  • '{p['pattern']}' [{p['severity']}]  {p.get('note', '')}")
     lines.append("")
 
-    # ── Sentence morphology bad practices ──
-    lines.append("SENTENCE MORPHOLOGY BAD PRACTICES:")
-    for cat_name, cat in SENTENCE_MORPHOLOGY.items():
-        sev = cat.get("severity", "MEDIUM")
-        lines.append(f"  [{cat_name}] [{sev}]")
-        for issue_id, desc in cat.get("issues", {}).items():
-            lines.append(f"    • {issue_id}: {desc}")
+    # ── Morphology (RULE-M01..M07) ────────────────────────────────────────
+    lines.append("SENTENCE MORPHOLOGY BAD PRACTICES (RULE-M01..M07):")
+    for rule in get_rules("morphology"):
+        if rule["rule_id"] == "RULE-M08":
+            continue
+        rid = rule["rule_id"]
+        sev = rule.get("failure_severity", "MEDIUM")
+        lines.append(f"  [{rid} — {rule['title']}] [{sev}]")
+        for chk in rule.get("checks", []):
+            lines.append(f"    • {chk}")
     lines.append("")
 
-    # ── Structural rules ──
-    lines.append("STRUCTURAL RULES (pre-parser checks):")
-    for r in STRUCTURAL_RULES:
-        sev = r.get("severity", "MEDIUM")
-        lines.append(f"  • {r['rule_id']} [{sev}]  {r['title']}: {r['check']}")
+    # ── Sentence length (RULE-M08) ────────────────────────────────────────
+    for rule in get_rules("morphology"):
+        if rule["rule_id"] == "RULE-M08":
+            sev = rule.get("failure_severity", "MEDIUM")
+            lines.append(f"SENTENCE LENGTH (RULE-M08) [{sev}]:")
+            for chk in rule.get("checks", []):
+                lines.append(f"  • {chk}")
+            break
 
     return "\n".join(lines)
 
 
 def format_ears_for_prompt() -> str:
-    """
-    EARS patterns block for injection into the recommender agent prompt.
-    Provides the pattern name, keyword, template, when to use it, and an example.
-    """
-    meta = _WORDING.get("ears_patterns", {})
-    ref  = meta.get("reference", "")
+    """EARS patterns block for injection into the recommender agent prompt."""
+    ref = _EARS_SECTION.get("reference", "")
     lines = [
         "EARS PATTERNS — Easy Approach to Requirements Syntax",
         "═" * 65,
         f"Reference: {ref}",
         "",
-        "INSTRUCTION: For every corrected rewrite, choose the MOST APPROPRIATE",
-        "EARS pattern based on the nature of the requirement, and apply its",
-        "template exactly. Do NOT default to Ubiquitous when a trigger, state,",
-        "condition, or unwanted behaviour is present or implied.",
+        "INSTRUCTION: Choose the MOST APPROPRIATE EARS pattern for every rewrite.",
+        "Do NOT default to Ubiquitous when a trigger, state, condition, or",
+        "unwanted behaviour is present or implied.",
         "",
     ]
     for p in EARS_PATTERNS:

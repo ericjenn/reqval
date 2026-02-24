@@ -1,36 +1,98 @@
 {
   "standard": "ARP4754A",
   "purpose": "System Requirements Validation",
-  "version": "1.1",
+  "version": "3.0",
+  "mandatory_modal_verb": {
+    "verb": "shall",
+    "note": "The only acceptable modal for binding requirements per ARP4754A and DO-178C writing conventions."
+  },
+  "ears_patterns": {
+    "description": "EARS (Easy Approach to Requirements Syntax) patterns for rewriting requirements. The recommender agent SHALL choose the most appropriate pattern based on the requirement nature.",
+    "reference": "Mavin et al., EARS (Easy Approach to Requirements Syntax), IEEE RE 2009.",
+    "patterns": [
+      {
+        "name": "Ubiquitous",
+        "keyword": null,
+        "template": "The <system name> shall <system response>.",
+        "use_when": "The requirement applies always, unconditionally, with no trigger or precondition.",
+        "example": "The Flight Control System shall respond to pilot inputs within 20 ms."
+      },
+      {
+        "name": "Event-Driven",
+        "keyword": "WHEN",
+        "template": "WHEN <trigger> [<optional precondition>], the <system name> shall <system response>.",
+        "use_when": "The requirement is triggered by a discrete event or stimulus.",
+        "example": "WHEN the pilot applies a control input, the Flight Control System shall generate a surface deflection command within 20 ms."
+      },
+      {
+        "name": "Unwanted Behavior",
+        "keyword": "IF … THEN",
+        "template": "IF <unwanted condition or event>, THEN the <system name> shall <system response>.",
+        "use_when": "The requirement specifies the system response to a fault, failure, or off-nominal condition.",
+        "example": "IF a sensor failure is detected, THEN the Flight Control System shall switch to the redundant sensor within 50 ms."
+      },
+      {
+        "name": "State-Driven",
+        "keyword": "WHILE",
+        "template": "WHILE <system state>, the <system name> shall <system response>.",
+        "use_when": "The requirement applies continuously during a specific operating state or mode.",
+        "example": "WHILE in degraded mode, the Flight Control System shall maintain attitude control with an accuracy of ±2°."
+      },
+      {
+        "name": "Optional Feature",
+        "keyword": "WHERE",
+        "template": "WHERE <feature is included>, the <system name> shall <system response>.",
+        "use_when": "The requirement applies only when an optional feature or configuration is present.",
+        "example": "WHERE the enhanced autopilot feature is installed, the Flight Control System shall provide envelope protection."
+      },
+      {
+        "name": "Complex",
+        "keyword": "mixed",
+        "template": "(Combination of two or more EARS patterns above.)",
+        "use_when": "The requirement involves multiple triggers, states, or conditions that cannot be cleanly separated without losing meaning.",
+        "example": "WHILE in cruise mode, WHEN the autopilot is engaged, the Flight Control System shall maintain altitude within ±50 ft."
+      }
+    ]
+  },
   "rulesets": [
     {
       "category": "completeness",
-      "arp4754a_section": "5.3",
+      "origin": "ARP4754A §5.3",
       "description": "Requirements Completeness",
       "rules": [
         {
-          "rule_id": "REQ-C01",
+          "rule_id": "RULE-C01",
           "title": "Unique requirement identifier",
           "objective": "Ensure each requirement is uniquely identifiable",
           "checks": [
             "Verify the requirement has an identifier",
             "Verify the identifier is unique across the requirement set",
-            "Verify the identifier adheres to the project's specified formatting or naming convention"
+            "Verify the identifier adheres to the project naming convention"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-C02",
+          "rule_id": "RULE-C02",
           "title": "Unambiguous requirement wording",
-          "objective": "Eliminate ambiguity in requirement text",
+          "objective": "Eliminate ambiguity — every term must be defined or measurable",
           "checks": [
-            "Detect ambiguous or subjective terms (e.g., fast, reliable, adequate)",
-            "Verify all terms are defined or measurable"
+            "Detect terms from the ambiguous-term categories below and flag each with its category and remediation:",
+            "[performance_speed / HIGH] fast, slow, quickly, soon, rapidly, timely — specify a numeric latency, throughput, or response time with unit and tolerance",
+            "[quantitative_approximation / HIGH] approximately, about, around, roughly — specify an exact value ± tolerance",
+            "[vague_quantification / HIGH] adequate, sufficient, appropriate, suitable, negligible — define the objective measurable criterion",
+            "[conditional_applicability / HIGH] as required, if applicable, where necessary, when needed — state the condition explicitly using IF/WHEN/WHILE/WHERE",
+            "[subjective_quality_judgment / HIGH] good, bad, better, best, optimal, acceptable, reasonable — replace with a measurable threshold",
+            "[performance_attributes / HIGH] reliable, robust, flexible, efficient — decompose into measurable sub-requirements",
+            "[usability_attributes / HIGH] user-friendly, intuitive, easy, simple — specify a measurable usability criterion",
+            "[optimization_terms / HIGH] minimize, maximize — specify the target value or bound",
+            "[state_classification / HIGH] normal, abnormal — define the specific operating condition explicitly",
+            "[scale_references / HIGH] high, low, large, small — specify a numeric threshold with unit",
+            "[technology_references / MEDIUM] state-of-the-art — reference a specific technical standard or document"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-C03",
+          "rule_id": "RULE-C03",
           "title": "Operational modes specified",
           "objective": "Ensure applicability conditions are stated",
           "checks": [
@@ -41,7 +103,7 @@
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-C04",
+          "rule_id": "RULE-C04",
           "title": "Acceptance criteria defined",
           "objective": "Ensure requirement can be accepted objectively",
           "checks": [
@@ -51,7 +113,7 @@
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-C05",
+          "rule_id": "RULE-C05",
           "title": "Safety requirements reference DAL",
           "objective": "Ensure safety requirements reference failure conditions and DAL",
           "checks": [
@@ -61,7 +123,7 @@
           "failure_severity": "BLOCKING"
         },
         {
-          "rule_id": "REQ-C06",
+          "rule_id": "RULE-C06",
           "title": "Requirement source identified",
           "objective": "Ensure traceability to origin",
           "checks": [
@@ -71,9 +133,9 @@
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-C07",
+          "rule_id": "RULE-C07",
           "title": "Derived requirements justified",
-          "objective": "Ensure derived requirements are documented",
+          "objective": "Ensure derived requirements are documented and safety-routed",
           "checks": [
             "Identify derived requirements",
             "Verify justification or derivation rationale exists",
@@ -82,9 +144,9 @@
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-C08",
+          "rule_id": "RULE-C08",
           "title": "Coverage of system functions",
-          "objective": "Ensure all FHA functions are covered",
+          "objective": "Ensure all FHA functions are covered by requirements",
           "checks": [
             "Compare requirement coverage against FHA functions",
             "Identify missing functional coverage"
@@ -92,7 +154,7 @@
           "failure_severity": "BLOCKING"
         },
         {
-          "rule_id": "REQ-C09",
+          "rule_id": "RULE-C09",
           "title": "Interface requirements completeness",
           "objective": "Ensure interfaces are fully specified",
           "checks": [
@@ -103,7 +165,7 @@
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-C10",
+          "rule_id": "RULE-C10",
           "title": "Environmental requirements specified",
           "objective": "Ensure environmental constraints are stated where applicable",
           "checks": [
@@ -116,69 +178,69 @@
     },
     {
       "category": "consistency",
-      "arp4754a_section": "5.4",
+      "origin": "ARP4754A §5.4",
       "description": "Requirements Consistency",
       "rules": [
         {
-          "rule_id": "REQ-K01",
+          "rule_id": "RULE-K01",
           "title": "No contradictory requirements",
-          "objective": "Eliminate logical contradictions",
+          "objective": "Eliminate logical contradictions across the requirement set",
           "checks": [
             "Perform pairwise semantic contradiction analysis",
             "Flag conflicting constraints or behaviors",
-            "Flag semantic equivalence",
-            "Flag subsuming"
+            "Flag semantic equivalence (duplicate requirements)",
+            "Flag subsuming requirements (one requirement fully contained in another)"
           ],
           "failure_severity": "BLOCKING"
         },
         {
-          "rule_id": "REQ-K02",
+          "rule_id": "RULE-K02",
           "title": "Consistent terminology",
-          "objective": "Ensure uniform use of terms",
+          "objective": "Ensure uniform use of terms across the requirement set",
           "checks": [
-            "Extract key terms",
-            "Detect inconsistent usage or definitions",
+            "Extract key terms from all requirements",
+            "Detect inconsistent usage or definitions of the same term",
             "Verify terms against the approved project Data Dictionary or Glossary"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-K03",
+          "rule_id": "RULE-K03",
           "title": "Consistent units and tolerances",
-          "objective": "Prevent unit or tolerance mismatches",
+          "objective": "Prevent unit or tolerance mismatches across requirements",
           "checks": [
-            "Detect physical quantities",
-            "Verify unit and tolerance consistency"
+            "Detect physical quantities and their units in all requirements",
+            "Verify unit and tolerance consistency across the requirement set"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-K04",
+          "rule_id": "RULE-K04",
           "title": "Consistent DAL allocation",
-          "objective": "Ensure DAL consistency with safety assessments",
+          "objective": "Ensure DAL assignments are consistent with safety assessments",
           "checks": [
             "Compare DAL assignments with FHA/PSSA",
-            "Flag mismatches"
+            "Flag any mismatch between assigned DAL and failure condition severity"
           ],
           "failure_severity": "BLOCKING"
         },
         {
-          "rule_id": "REQ-K05",
+          "rule_id": "RULE-K05",
           "title": "Performance feasibility",
-          "objective": "Ensure performance is consistent with constraints",
+          "objective": "Ensure performance requirements are consistent with known HW/SW constraints",
           "checks": [
             "Compare performance requirements with HW/SW constraints",
-            "Flag infeasible requirements"
+            "Flag infeasible or contradictory performance requirements"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-K06",
+          "rule_id": "RULE-K06",
           "title": "Timing consistency",
-          "objective": "Ensure timing constraints do not conflict",
+          "objective": "Ensure timing constraints do not conflict across requirements",
           "checks": [
-            "Extract timing constraints",
-            "Detect conflicting latency or period requirements"
+            "Extract all timing constraints from the requirement set",
+            "Detect conflicting latency, period, or deadline requirements"
           ],
           "failure_severity": "HIGH"
         }
@@ -186,64 +248,64 @@
     },
     {
       "category": "verifiability",
-      "arp4754a_section": "5.5",
+      "origin": "ARP4754A §5.5",
       "description": "Requirements Verifiability",
       "rules": [
         {
-          "rule_id": "REQ-V01",
+          "rule_id": "RULE-V01",
           "title": "Requirement is verifiable",
           "objective": "Ensure objective verification is possible",
           "checks": [
-            "Verify a verification approach exists",
-            "Reject unverifiable statements"
+            "Verify a verification approach exists for the requirement",
+            "Reject unverifiable statements that cannot be tested, analysed, inspected, or demonstrated"
           ],
           "failure_severity": "BLOCKING"
         },
         {
-          "rule_id": "REQ-V02",
+          "rule_id": "RULE-V02",
           "title": "Quantified performance thresholds",
-          "objective": "Ensure performance is measurable",
+          "objective": "Ensure performance criteria are measurable",
           "checks": [
-            "Detect numeric thresholds and tolerances",
-            "Flag vague performance statements"
+            "Detect numeric thresholds and tolerances in the requirement",
+            "Flag vague performance statements that lack numeric criteria (value + unit + tolerance)"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-V03",
-          "title": "Subjective terms supported",
+          "rule_id": "RULE-V03",
+          "title": "No subjective terms without measurable backing",
           "objective": "Eliminate purely subjective requirements",
           "checks": [
-            "Detect subjective wording",
-            "Verify presence of measurable criteria"
+            "Detect subjective or qualitative wording",
+            "Verify that measurable acceptance criteria exist for every subjective term"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-V04",
+          "rule_id": "RULE-V04",
           "title": "Verification method mapped",
-          "objective": "Ensure verification method is identified",
+          "objective": "Ensure a verification method is identified for the requirement",
           "checks": [
-            "Verify mapping to test, analysis, inspection, or demonstration",
-            "Verify the specific phase or level of verification is identified (e.g., equipment level, system level, flight test)"
+            "Verify mapping to at least one of: Test (T), Analysis (A), Inspection (I), Demonstration (D)",
+            "Verify the specific phase or level of verification is identified (e.g. equipment level, system level, flight test)"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-V05",
+          "rule_id": "RULE-V05",
           "title": "Verification feasibility",
           "objective": "Ensure verification can realistically be performed",
           "checks": [
-            "Assess feasibility against project test capabilities and constraints"
+            "Assess feasibility of the required verification against project test capabilities and constraints"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-V06",
+          "rule_id": "RULE-V06",
           "title": "No impossible verification conditions",
-          "objective": "Avoid undefined or impossible conditions",
+          "objective": "Avoid undefined or impossible states in the requirement",
           "checks": [
-            "Detect impossible states or undefined references"
+            "Detect physically impossible states or undefined references in the requirement text"
           ],
           "failure_severity": "BLOCKING"
         }
@@ -251,53 +313,53 @@
     },
     {
       "category": "traceability",
-      "arp4754a_section": "5.6",
+      "origin": "ARP4754A §5.6",
       "description": "Requirements Traceability",
       "rules": [
         {
-          "rule_id": "REQ-T01",
+          "rule_id": "RULE-T01",
           "title": "Traceability to higher-level requirements",
-          "objective": "Ensure upward traceability",
+          "objective": "Ensure upward traceability to parent or regulatory source",
           "checks": [
-            "Verify link to aircraft, regulatory, or customer requirement",
-            "Identify orphaned requirements (requirements with no parent trace)"
+            "Verify link to aircraft-level, regulatory, or customer requirement",
+            "Identify orphaned requirements that have no parent trace"
           ],
           "failure_severity": "BLOCKING"
         },
         {
-          "rule_id": "REQ-T02",
+          "rule_id": "RULE-T02",
           "title": "Derived requirement traceability",
-          "objective": "Ensure derived requirements are traceable",
+          "objective": "Ensure derived requirements are traceable to their justification",
           "checks": [
-            "Verify link to safety assessment or design decision"
+            "Verify link to safety assessment (FHA/PSSA/SSA) or documented design decision"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-T03",
+          "rule_id": "RULE-T03",
           "title": "Downward traceability",
-          "objective": "Ensure link to implementation artifacts",
+          "objective": "Ensure every requirement links to implementation artifacts",
           "checks": [
-            "Verify trace to design or code elements",
-            "Ensure 100% downward coverage (no requirements lacking downstream allocation)"
+            "Verify trace to design or code elements exists",
+            "Ensure 100% downward coverage — no requirement may lack downstream allocation"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-T04",
-          "title": "Allocation documented",
-          "objective": "Ensure HW/SW allocation is specified",
+          "rule_id": "RULE-T04",
+          "title": "HW/SW allocation documented",
+          "objective": "Ensure hardware/software allocation is specified for each requirement",
           "checks": [
-            "Verify allocation documentation exists"
+            "Verify that HW/SW allocation documentation exists for the requirement"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-T05",
-          "title": "FHA to safety requirement traceability",
-          "objective": "Ensure safety coverage",
+          "rule_id": "RULE-T05",
+          "title": "FHA failure condition traceability",
+          "objective": "Ensure each FHA failure condition maps to at least one safety requirement",
           "checks": [
-            "Verify each FHA failure condition maps to safety requirements"
+            "Verify each FHA failure condition is covered by at least one safety requirement"
           ],
           "failure_severity": "BLOCKING"
         }
@@ -305,65 +367,195 @@
     },
     {
       "category": "correctness",
-      "arp4754a_section": "5.2",
+      "origin": "ARP4754A §5.2",
       "description": "Requirements Correctness",
       "rules": [
         {
-          "rule_id": "REQ-R01",
+          "rule_id": "RULE-R01",
           "title": "Correct system behavior",
-          "objective": "Ensure requirement reflects intended behavior",
+          "objective": "Ensure the requirement reflects the intended system behavior",
           "checks": [
-            "Compare requirement intent with system definition",
+            "Compare requirement intent with the system definition",
             "Verify adherence to known physical or mathematical boundaries"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-R02",
+          "rule_id": "RULE-R02",
           "title": "No unnecessary design constraints",
-          "objective": "Avoid premature design decisions",
+          "objective": "Avoid premature design decisions in requirements",
           "checks": [
-            "Detect implementation-specific wording",
-            "Verify the requirement states 'what' the system must do, not 'how' it should be implemented"
+            "Detect implementation-specific wording (how the system does something)",
+            "Verify the requirement states what the system must do, not how it should be implemented"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-R03",
-          "title": "Correct modal verbs usage",
-          "objective": "Ensure correct use of shall/should",
+          "rule_id": "RULE-R03",
+          "title": "Correct modal verb — 'shall' mandatory",
+          "objective": "Ensure 'shall' is the sole modal for all binding obligations",
           "checks": [
-            "Verify 'shall' used for mandatory statements",
-            "Detect improper use of 'will', 'must', or 'may' for binding requirements"
+            "Verify 'shall' is used for every binding obligation",
+            "Flag any of the following weak or non-standard modals and replace with 'shall' if the obligation is binding:",
+            "  should      — recommendation, not obligation",
+            "  may         — permission, not obligation",
+            "  might       — possibility, not obligation",
+            "  could       — capability or possibility, not obligation",
+            "  would       — conditional, not a binding obligation",
+            "  can         — capability; use 'shall be capable of' for binding statements",
+            "  must        — non-standard in ARP4754A context; replace with 'shall'",
+            "  will        — expresses intent or future state, not a binding obligation",
+            "  is required to — passive paraphrase; rewrite as active 'shall'",
+            "  should be able to — doubly weak; replace with 'shall be capable of'"
           ],
           "failure_severity": "LOW"
         },
         {
-          "rule_id": "REQ-R04",
-          "title": "Single requirement per statement",
-          "objective": "Avoid compound requirements",
+          "rule_id": "RULE-R04",
+          "title": "Single obligation per statement",
+          "objective": "Avoid compound requirements — one 'shall' per statement",
           "checks": [
-            "Detect multiple obligations in one statement",
-            "Identify conjunctions (and, or, but) that improperly combine multiple verifiable actions"
+            "Count the number of 'shall' occurrences — more than one indicates a compound requirement",
+            "Detect multiple obligations joined by 'and' or 'or' within a single statement",
+            "Split into separate requirements, one 'shall' per statement"
           ],
           "failure_severity": "HIGH"
         },
         {
-          "rule_id": "REQ-R05",
+          "rule_id": "RULE-R05",
           "title": "Appropriate abstraction level",
-          "objective": "Ensure correct hierarchy level",
+          "objective": "Ensure the requirement is written at the correct hierarchy level",
           "checks": [
-            "Assess abstraction relative to requirement level"
+            "Assess abstraction level relative to the requirement hierarchy (aircraft / system / item)"
           ],
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "REQ-R06",
+          "rule_id": "RULE-R06",
           "title": "Explicit assumptions",
-          "objective": "Ensure assumptions are documented",
+          "objective": "Ensure all assumptions underlying the requirement are documented",
           "checks": [
-            "Detect implicit assumptions",
-            "Verify explicit documentation"
+            "Detect implicit assumptions embedded in the requirement text",
+            "Verify every assumption is explicitly stated"
+          ],
+          "failure_severity": "MEDIUM"
+        }
+      ]
+    },
+    {
+      "category": "wording",
+      "origin": "ARP4754A writing conventions",
+      "description": "Lexical wording rules — markers that unconditionally invalidate a requirement",
+      "rules": [
+        {
+          "rule_id": "RULE-W01",
+          "title": "No TBD placeholders",
+          "objective": "Ensure all values are defined before review",
+          "checks": [
+            "Detect the literal string 'TBD' (case-sensitive) anywhere in the requirement text",
+            "A requirement containing TBD is not ready for review — all values must be resolved before submission"
+          ],
+          "failure_severity": "BLOCKING"
+        },
+        {
+          "rule_id": "RULE-W02",
+          "title": "No TBC placeholders",
+          "objective": "Ensure all values are confirmed before review",
+          "checks": [
+            "Detect the literal string 'TBC' (case-sensitive) anywhere in the requirement text",
+            "A requirement containing TBC is not ready for review — all values must be confirmed before submission"
+          ],
+          "failure_severity": "BLOCKING"
+        }
+      ]
+    },
+    {
+      "category": "morphology",
+      "origin": "ARP4754A writing conventions + project wording guide",
+      "description": "Sentence structure and morphology rules — clarity, active voice, unambiguous reference",
+      "rules": [
+        {
+          "rule_id": "RULE-M01",
+          "title": "No negation issues",
+          "objective": "Express obligations as positive, measurable statements",
+          "checks": [
+            "[double_negation] Detect two negation markers in the same clause (e.g. 'shall not be inactive') — rewrite as a positive obligation",
+            "[hidden_negation] Detect implicit negative constructions ('unless', 'except when', 'unless otherwise specified') — make the condition explicit",
+            "[negative_requirement] Detect requirements expressed in negative form — prefer 'The X shall achieve Y' over 'The X shall not fail to achieve Y'"
+          ],
+          "failure_severity": "HIGH"
+        },
+        {
+          "rule_id": "RULE-M02",
+          "title": "No structural complexity",
+          "objective": "Keep each requirement simple, focused, and parseable",
+          "checks": [
+            "[long_sentences] Flag sentences exceeding 30 words — split or restructure using an EARS pattern",
+            "[multiple_subordinate_clauses] Detect stacked dependent clauses — restructure using EARS patterns",
+            "[nested_conditions] Detect multiple embedded IF/WHEN/WHILE structures — decompose into separate requirements"
+          ],
+          "failure_severity": "HIGH"
+        },
+        {
+          "rule_id": "RULE-M03",
+          "title": "Unambiguous references and explicit subject",
+          "objective": "Every pronoun and reference must have a clear, named antecedent",
+          "checks": [
+            "[ambiguous_pronouns] Detect 'it', 'this', 'that', 'they', 'them' without a clear antecedent — replace with the explicit subject name",
+            "[unclear_references] Detect 'the system' when multiple systems are in scope — name the specific system",
+            "[dangling_modifiers] Detect modifiers not clearly attached to the subject they qualify",
+            "[implicit_subject] Verify the grammatical subject of 'shall' is an identifiable system or function — not 'it', 'this', or omitted"
+          ],
+          "failure_severity": "HIGH"
+        },
+        {
+          "rule_id": "RULE-M04",
+          "title": "Active voice",
+          "objective": "Use active voice to make the obligated entity explicit",
+          "checks": [
+            "Detect agentless passive constructions: 'shall be <past-participle>', 'is <past-participle> by'",
+            "Rewrite as '<Named subject> shall <verb> <object>'"
+          ],
+          "failure_severity": "LOW"
+        },
+        {
+          "rule_id": "RULE-M05",
+          "title": "No mixed modality",
+          "objective": "Use a single, consistent modal within each requirement statement",
+          "checks": [
+            "Detect the combination of 'shall' with 'should', 'may', or 'can' within the same requirement statement",
+            "Resolve to a single modal — use 'shall' if the obligation is binding"
+          ],
+          "failure_severity": "MEDIUM"
+        },
+        {
+          "rule_id": "RULE-M06",
+          "title": "No logical ambiguity",
+          "objective": "Make logical structure and conjunctions explicit and unambiguous",
+          "checks": [
+            "[and_or_combination] Detect 'and/or' — choose one conjunction or split the requirement into two",
+            "[implicit_conditions] Detect conditions not explicitly introduced by IF, WHEN, WHILE, or WHERE — make them explicit",
+            "[temporal_ambiguity] Detect unclear sequences of events (e.g. 'after initialisation') — specify the exact trigger or duration"
+          ],
+          "failure_severity": "HIGH"
+        },
+        {
+          "rule_id": "RULE-M07",
+          "title": "No vagueness in structure",
+          "objective": "Ensure requirements are complete, closed, and self-standing",
+          "checks": [
+            "[open_ended_lists] Detect 'etc.', 'etc', 'and/or', 'including but not limited to' — enumerate all items explicitly",
+            "[incomplete_sentences] Detect sentence fragments — ensure the requirement is a complete, self-standing statement"
+          ],
+          "failure_severity": "HIGH"
+        },
+        {
+          "rule_id": "RULE-M08",
+          "title": "Sentence length",
+          "objective": "Keep sentences concise for clarity and parsability",
+          "checks": [
+            "Count words in the requirement statement",
+            "Flag if word count exceeds 30 — consider splitting or restructuring with an EARS pattern"
           ],
           "failure_severity": "MEDIUM"
         }
