@@ -194,8 +194,6 @@
         "rule_id": "WORD-S01",
         "title": "Single 'shall' per statement",
         "check": "Count the number of 'shall' occurrences. More than one indicates a compound requirement.",
-        "threshold": 1,
-        "comparison": "gt",
         "severity": "HIGH",
         "note": "Split into separate requirements, one per obligation (REQ-R04)."
       },

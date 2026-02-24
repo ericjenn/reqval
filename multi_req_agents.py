@@ -408,11 +408,12 @@ def filter_agent(
 # Phase 4 — COMPARATOR
 # ─────────────────────────────────────────────
 
-_BATCH_SIZE = 8   # pairs per LLM call — keeps context manageable
+_BATCH_SIZE = 2   # pairs per LLM call — keeps context manageable
 
 def comparator_agent(
     normalized: List[NormalizedReq],
     comparison_set: List[ValidatedPair],
+    progress_cb=None,
 ) -> tuple[List[ComparisonResult], str]:
     """
     Diagnoses each validated pair for inter-requirement defects.
@@ -527,6 +528,18 @@ Return ONLY valid JSON. No markdown fences."""
                     "evidence": ""
                 })
 
+        # Emit pair progress after each batch
+        if progress_cb is not None:
+            try:
+                progress_cb(
+                    event="pair_progress",
+                    current=min(i + _BATCH_SIZE, len(comparison_set)),
+                    total=len(comparison_set),
+                    label="Multi-req comparison",
+                )
+            except Exception:
+                pass
+
     findings = _format_findings(all_results, normalized)
     return all_results, findings
 
@@ -597,6 +610,7 @@ def format_clusters_summary(clusters: Dict[str, Dict[str, List[str]]]) -> str:
 def run_multi_req_pipeline(
     requirements: List[dict],
     system_context: str = "",
+    progress_cb=None,
 ) -> dict:
     """
     Run the full 4-phase multi-requirement analysis pipeline.
@@ -604,6 +618,7 @@ def run_multi_req_pipeline(
     Args:
         requirements   : parsed requirements from orchestrator_agent
         system_context : RAG system context string
+        progress_cb    : optional progress callback (see agents._emit signature)
 
     Returns dict with keys:
         normalized_requirements : List[NormalizedReq]
@@ -630,7 +645,9 @@ def run_multi_req_pipeline(
 
     # Phase 4 — Compare
     print("  [MultiReq] Phase 4/4 — Comparing requirement pairs...")
-    comparison_results, multi_req_findings = comparator_agent(normalized, comparison_set)
+    comparison_results, multi_req_findings = comparator_agent(
+        normalized, comparison_set, progress_cb=progress_cb
+    )
 
     stats = {
         "total_requirements":  len(requirements),

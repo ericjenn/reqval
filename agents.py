@@ -73,6 +73,58 @@ class ValidationState(TypedDict):
 
 
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+# State
+# ─────────────────────────────────────────────
+
+class ValidationState(TypedDict):
+    # ── Inputs ───────────────────────────────────────────────────────────
+    requirements:             Annotated[List[dict], lambda old, new: new]
+    raw_input:                str
+    input_metadata:           Annotated[dict, lambda old, new: new]
+    system_context:           str
+    rag_available:            bool
+    # ── Per-requirement findings (dict keyed by req_id) ──────────────────
+    # Each value is the verbatim LLM output for that single requirement.
+    completeness_findings:    Annotated[dict, lambda old, new: {**old, **new}]
+    verifiability_findings:   Annotated[dict, lambda old, new: {**old, **new}]
+    traceability_findings:    Annotated[dict, lambda old, new: {**old, **new}]
+    correctness_findings:     Annotated[dict, lambda old, new: {**old, **new}]
+    wording_findings:         Annotated[dict, lambda old, new: {**old, **new}]
+    # ── Cross-requirement findings (single string — inherently bulk) ──────
+    consistency_findings:     str
+    # ── Per-requirement rewrites (dict keyed by req_id) ──────────────────
+    recommendations:          Annotated[dict, lambda old, new: {**old, **new}]
+    # ── Final output ─────────────────────────────────────────────────────
+    final_report:             str
+    # ── Multi-requirement pipeline ────────────────────────────────────────
+    normalized_requirements:  Annotated[List[dict], lambda old, new: new]
+    clusters_summary:         str
+    multi_req_findings:       str
+    multi_req_stats:          Annotated[dict, lambda old, new: new]
+    messages:                 Annotated[list, add_messages]
+
+# Progress callback hook
+# ─────────────────────────────────────────────
+# main.py registers a callable here before calling validate_requirements().
+# Signature:  callback(event, current, total, label)
+# Events:
+#   "agent_start"   — agent is about to run          (label = human-readable name)
+#   "agent_done"    — agent finished                 (label = human-readable name)
+#   "req_progress"  — per-req progress within agent  (current/total = req counts)
+#   "pair_progress" — per-batch in multi-req phase 4 (current/total = pair counts)
+_progress_cb = None   # replaced by main.py via set_progress_callback()
+
+def _emit(event: str, current: int = 0, total: int = 0, label: str = "") -> None:
+    if _progress_cb is not None:
+        try:
+            _progress_cb(event=event, current=current, total=total, label=label)
+        except Exception:
+            pass  # progress errors must never abort the pipeline
+
+
+# ─────────────────────────────────────────────
 # Shared helpers
 # ─────────────────────────────────────────────
 
@@ -247,6 +299,7 @@ def orchestrator_agent(state: ValidationState) -> ValidationState:
         ) from exc
 
     print(f"  [Orchestrator] {req_summary(metadata, pre_loaded)}")
+    _emit("agent_done", label="Orchestrator")
 
     # ── Phase 1: LLM semantic enrichment ─────────────────────────────────
     #TODO: the req type should be provided by a dedicated field...
@@ -350,76 +403,105 @@ Return ONLY valid JSON — no markdown fences, no commentary."""
     }
 
 
+
 # ─────────────────────────────────────────────
-# Agent 2: Completeness  (§5.3)
+# Per-requirement agent helper
+# ─────────────────────────────────────────────
+
+def _run_per_req(
+    state: ValidationState,
+    agent_label: str,
+    system_prompt_fn,          # callable(req, rag_ctx) → system_prompt str
+    human_msg_fn,              # callable(req, rag_ctx) → human_message str
+    result_key: str,
+) -> dict:
+    """
+    Generic per-requirement LLM loop used by all single-req analysis agents.
+
+    Sends one LLM call per requirement.
+    Returns {result_key: {req_id: llm_response_text, ...}}.
+    """
+    print(f"  [{agent_label}]")
+    _emit("agent_start", label=agent_label)
+    llm    = get_llm()
+    reqs   = state["requirements"]
+    total  = len(reqs)
+    out    = {}
+
+    for idx, req in enumerate(reqs):
+        rid = req.get("id", f"REQ-{idx+1}")
+        _emit("req_progress", current=idx, total=total, label=agent_label)
+
+        rag_ctx      = ""
+        rag_query    = system_prompt_fn(req, "")  # first call gives us query hint
+        if get_rag().is_ready():
+            rag_ctx  = _rag_block(rag_query[:200], k=4)
+
+        sys_prompt   = system_prompt_fn(req, rag_ctx)
+        human_msg    = human_msg_fn(req, rag_ctx)
+
+        response     = llm.invoke([
+            SystemMessage(content=sys_prompt),
+            HumanMessage(content=human_msg),
+        ])
+        out[rid]     = response.content
+        _emit("req_progress", current=idx + 1, total=total, label=agent_label)
+
+    _emit("agent_done", label=agent_label)
+    return {result_key: out}
+
+
+# ─────────────────────────────────────────────
+# Agent 2: Completeness  (§5.3)  — per req
 # ─────────────────────────────────────────────
 
 def completeness_agent(state: ValidationState) -> ValidationState:
-    """ARP4754A §5.3 — Completeness. Rules and checks loaded from rules.json."""
-    print("  [Completeness]")
-    llm        = get_llm()
+    """ARP4754A §5.3 — Completeness. One LLM call per requirement."""
     rules_text = format_rules_for_prompt("completeness")
-    wording    = format_wording_for_prompt()
-    rag_ctx    = _rag_block(
-        "system functions safety requirements interface definitions "
-        "environmental conditions acceptance criteria test methods", k=5
-    )
 
-    system_prompt = f"""You are an {STANDARD} §5.3 completeness auditor for aerospace systems.
+    def sys_fn(req, rag_ctx):
+        if len(rag_ctx) < 10:   # called as query-hint pass
+            return (
+                "system functions safety requirements interface definitions "
+                "environmental conditions acceptance criteria test methods"
+            )
+        return f"""You are an {STANDARD} §5.3 completeness auditor for aerospace systems.
 
 {_severity_legend()}
 
 COMPLETENESS RULES (from rules.json):
 {rules_text}
 
-{wording}
 {rag_ctx}
 {_sys_ctx(state)}
 
-INSTRUCTIONS — for EACH requirement, execute the checks listed under every rule:
+INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
 1. Work through each rule's CHECK STEPS explicitly.
-2. For each check step: state whether it PASSES (✓) or FAILS (✗) and why.
+2. For each check step: state PASSES (✓) or FAILS (✗) and why.
 3. For FAILS: quote the exact problematic text and state the failure_severity.
-4. Give a per-requirement completeness score (0-100%).
 
-OUTPUT FORMAT per requirement:
+OUTPUT FORMAT:
 ─────────────────────────────────────────────────
 [REQ-ID]: [first 60 chars of requirement text...]
 ─────────────────────────────────────────────────
-  REQ-C01 [SEVERITY] ✓/✗  — [explanation + check results]
-  REQ-C02 [SEVERITY] ✓/✗  — [explanation + check results]
-  REQ-C03 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C04 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C05 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C06 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C07 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C08 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C09 [SEVERITY] ✓/✗  — [explanation]
-  REQ-C10 [SEVERITY] ✓/✗  — [explanation]
-  Ambiguous terms found: [list with category, e.g. "fast [performance_speed]", or "none"]
-  Morphology issues: [list MORPHOLOGY bad-practice findings, or "none"]
-  Score: XX/100
-─────────────────────────────────────────────────
+  REQ-XXX [SEVERITY] ✓/✗  — [explanation]
 
-End with:
-OVERALL COMPLETENESS SCORE: XX/100
-SUMMARY: [2-3 sentence paragraph]"""
+─────────────────────────────────────────────────"""
 
-    req_text = json.dumps(state["requirements"], indent=2)
-    response  = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Perform completeness analysis:\n\n{req_text}")
-    ])
-    return {"completeness_findings": response.content}
+    def human_fn(req, rag_ctx):
+        return f"Perform completeness analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
+
+    return _run_per_req(state, "Completeness §5.3", sys_fn, human_fn, "completeness_findings")
 
 
 # ─────────────────────────────────────────────
-# Agent 3: Consistency  (§5.4)
+# Agent 3: Consistency  (§5.4)  — BULK (cross-req by nature)
 # ─────────────────────────────────────────────
 
 def consistency_agent(state: ValidationState) -> ValidationState:
-    """ARP4754A §5.4 — Consistency. Rules and checks loaded from rules.json."""
-    print("  [Consistency]")
+    """ARP4754A §5.4 — Consistency. Bulk call — cross-requirement analysis."""
+    print("  [Consistency §5.4]")
+    _emit("agent_start", label="Consistency §5.4")
     llm        = get_llm()
     rules_text = format_rules_for_prompt("consistency")
     dal_text   = "\n".join(f"  DAL-{k}: {v}" for k, v in DAL_LEVELS.items())
@@ -441,13 +523,12 @@ DAL LEVEL DEFINITIONS:
 {_sys_ctx(state)}
 
 INSTRUCTIONS — analyse the FULL SET of requirements together:
-1. For each rule, execute every listed CHECK STEP across all requirements.
-2. REQ-K01: perform pairwise contradiction analysis — cite both requirement IDs.
-3. REQ-K02: extract key terms and flag inconsistent usage across requirements.
-4. REQ-K03: extract all physical quantities; verify unit and tolerance consistency.
-5. REQ-K04: compare every DAL assignment against stated failure conditions.
-6. REQ-K05/K06: identify timing and performance conflicts.
-7. State PASSES (✓) or FAILS (✗) per check, with failure_severity.
+1. REQ-K01: pairwise contradiction analysis — cite both req IDs.
+2. REQ-K02: extract key terms; flag inconsistent usage across requirements.
+3. REQ-K03: extract all physical quantities; verify unit and tolerance consistency.
+4. REQ-K04: compare every DAL assignment against stated failure conditions.
+5. REQ-K05/K06: identify timing and performance conflicts.
+6. State PASSES (✓) or FAILS (✗) with failure_severity per check.
 
 OUTPUT FORMAT:
 ─────────────────────────────────────────────────
@@ -464,32 +545,35 @@ REQ-K05 [SEVERITY] — Performance Feasibility
 REQ-K06 [SEVERITY] — Timing Consistency
   [findings]
 ─────────────────────────────────────────────────
-OVERALL CONSISTENCY SCORE: XX/100
 SUMMARY: [2-3 sentence paragraph]"""
 
     req_text = json.dumps(state["requirements"], indent=2)
-    response  = llm.invoke([
+    _emit("req_progress", current=0, total=len(state["requirements"]), label="Consistency §5.4")
+    response = llm.invoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Perform consistency analysis:\n\n{req_text}")
+        HumanMessage(content=f"Perform consistency analysis:\n\n{req_text}"),
     ])
+    _emit("req_progress", current=len(state["requirements"]),
+          total=len(state["requirements"]), label="Consistency §5.4")
+    _emit("agent_done", label="Consistency §5.4")
     return {"consistency_findings": response.content}
 
 
 # ─────────────────────────────────────────────
-# Agent 4: Verifiability  (§5.5)
+# Agent 4: Verifiability  (§5.5)  — per req
 # ─────────────────────────────────────────────
 
 def verifiability_agent(state: ValidationState) -> ValidationState:
-    """ARP4754A §5.5 — Verifiability. Rules and checks loaded from rules.json."""
-    print("  [Verifiability]")
-    llm        = get_llm()
+    """ARP4754A §5.5 — Verifiability. One LLM call per requirement."""
     rules_text = format_rules_for_prompt("verifiability")
-    rag_ctx    = _rag_block(
-        "test plan verification methods acceptance criteria performance thresholds "
-        "measurement tolerances testability analysis inspection demonstration", k=5
-    )
 
-    system_prompt = f"""You are an {STANDARD} §5.5 verifiability auditor for aerospace systems.
+    def sys_fn(req, rag_ctx):
+        if len(rag_ctx) < 10:
+            return (
+                "test plan verification methods acceptance criteria performance thresholds "
+                "measurement tolerances testability analysis inspection demonstration"
+            )
+        return f"""You are an {STANDARD} §5.5 verifiability auditor for aerospace systems.
 
 {_severity_legend()}
 
@@ -504,7 +588,7 @@ VERIFICATION METHODS defined in {STANDARD}:
 {rag_ctx}
 {_sys_ctx(state)}
 
-INSTRUCTIONS — for EACH requirement, execute every check step:
+INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
 1. REQ-V01: state Yes / Partially / No for verifiability and why.
 2. REQ-V02: identify numeric thresholds present; flag vague performance statements.
 3. REQ-V03: list any subjective terms; confirm measurable criteria exist.
@@ -512,9 +596,9 @@ INSTRUCTIONS — for EACH requirement, execute every check step:
 5. REQ-V05: assess feasibility; flag any unrealistic verification demands.
 6. REQ-V06: detect impossible states or undefined references.
 7. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
-8. Give a per-requirement verifiability score (0-100%).
+8. Give a per-requirement verifiability score (0–100).
 
-OUTPUT FORMAT per requirement:
+OUTPUT FORMAT:
 ─────────────────────────────────────────────────
 [REQ-ID]: [first 60 chars...]
 ─────────────────────────────────────────────────
@@ -524,35 +608,29 @@ OUTPUT FORMAT per requirement:
   REQ-V04 [SEVERITY] ✓/✗  — [recommended method: T/A/I/D]
   REQ-V05 [SEVERITY] ✓/✗  — [feasibility assessment]
   REQ-V06 [SEVERITY] ✓/✗  — [impossible conditions check]
-  Score: XX/100
-─────────────────────────────────────────────────
+─────────────────────────────────────────────────"""
 
-OVERALL VERIFIABILITY SCORE: XX/100
-SUMMARY: [2-3 sentence paragraph]"""
+    def human_fn(req, rag_ctx):
+        return f"Perform verifiability analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
 
-    req_text = json.dumps(state["requirements"], indent=2)
-    response  = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Perform verifiability analysis:\n\n{req_text}")
-    ])
-    return {"verifiability_findings": response.content}
+    return _run_per_req(state, "Verifiability §5.5", sys_fn, human_fn, "verifiability_findings")
 
 
 # ─────────────────────────────────────────────
-# Agent 5: Traceability  (§5.6)
+# Agent 5: Traceability  (§5.6)  — per req
 # ─────────────────────────────────────────────
 
 def traceability_agent(state: ValidationState) -> ValidationState:
-    """ARP4754A §5.6 — Traceability. Rules and checks loaded from rules.json."""
-    print("  [Traceability]")    
-    llm        = get_llm()
+    """ARP4754A §5.6 — Traceability. One LLM call per requirement."""
     rules_text = format_rules_for_prompt("traceability")
-    rag_ctx    = _rag_block(
-        "FHA failure conditions PSSA SSA parent requirements regulatory basis "
-        "hardware software allocation derived requirements justification", k=5
-    )
 
-    system_prompt = f"""You are an {STANDARD} §5.6 traceability auditor for aerospace systems.
+    def sys_fn(req, rag_ctx):
+        if len(rag_ctx) < 10:
+            return (
+                "FHA failure conditions PSSA SSA parent requirements regulatory basis "
+                "hardware software allocation derived requirements justification"
+            )
+        return f"""You are an {STANDARD} §5.6 traceability auditor for aerospace systems.
 
 {_severity_legend()}
 
@@ -561,23 +639,21 @@ TRACEABILITY RULES (from rules.json):
 
 TRACEABILITY HIERARCHY:
   Aircraft Level → System Level → Item Level (HW / SW)
-  ↕ bidirectional
   Safety Assessments: FHA → PSSA → SSA
 {rag_ctx}
 {_sys_ctx(state)}
 
-INSTRUCTIONS — for EACH requirement, execute every check step:
+INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
 1. REQ-T01: identify whether an upstream source is stated in the text.
 2. REQ-T02: for derived requirements, verify a justification link exists.
 3. REQ-T03: assess whether downward traceability to design artifacts is implied.
 4. REQ-T04: determine whether HW or SW allocation is specified or inferable.
 5. REQ-T05: for safety requirements, verify a FHA failure condition is referenced.
 6. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
-7. Give a per-requirement traceability score (0-100%).
 
-Note: assess only what is PRESENT IN THE TEXT — do not assume external databases.
+Note: assess only what is PRESENT IN THE TEXT.
 
-OUTPUT FORMAT per requirement:
+OUTPUT FORMAT:
 ─────────────────────────────────────────────────
 [REQ-ID]: [first 60 chars...]
 ─────────────────────────────────────────────────
@@ -586,117 +662,144 @@ OUTPUT FORMAT per requirement:
   REQ-T03 [SEVERITY] ✓/✗  — [downward trace]
   REQ-T04 [SEVERITY] ✓/✗  — [HW/SW allocation]
   REQ-T05 [SEVERITY] ✓/✗  — [FHA failure condition reference]
-  Score: XX/100
-─────────────────────────────────────────────────
+─────────────────────────────────────────────────"""
 
-OVERALL TRACEABILITY SCORE: XX/100
-SUMMARY: [2-3 sentence paragraph]"""
+    def human_fn(req, rag_ctx):
+        return f"Perform traceability analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
 
-    req_text = json.dumps(state["requirements"], indent=2)
-    response  = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Perform traceability analysis:\n\n{req_text}")
-    ])
-    return {"traceability_findings": response.content}
+    return _run_per_req(state, "Traceability §5.6", sys_fn, human_fn, "traceability_findings")
 
 
 # ─────────────────────────────────────────────
-# Agent 6: Correctness  (§5.2)
+# Agent 6: Correctness  (§5.2)  — per req
 # ─────────────────────────────────────────────
 
 def correctness_agent(state: ValidationState) -> ValidationState:
-    """ARP4754A §5.2 — Correctness. Rules and checks loaded from rules.json."""
-    print("  [Correctness]")
-    llm        = get_llm()
+    """ARP4754A §5.2 — Correctness. One LLM call per requirement."""
     rules_text = format_rules_for_prompt("correctness")
-    wording    = format_wording_for_prompt()
-    rag_ctx    = _rag_block(
-        "system functions capabilities what the system does operational modes "
-        "design decisions assumptions constraints", k=5
-    )
 
-    system_prompt = f"""You are an {STANDARD} §5.2 correctness auditor for aerospace systems.
+    def sys_fn(req, rag_ctx):
+        if len(rag_ctx) < 10:
+            return (
+                "system functions capabilities what the system does operational modes "
+                "design decisions assumptions constraints"
+            )
+        return f"""You are an {STANDARD} §5.2 correctness auditor for aerospace systems.
 
 {_severity_legend()}
 
 CORRECTNESS RULES (from rules.json):
 {rules_text}
-
-{wording}
 {rag_ctx}
 {_sys_ctx(state)}
 
-INSTRUCTIONS — for EACH requirement, execute every check step:
-1. REQ-R01: compare requirement intent with the system definition; flag mismatches.
-2. REQ-R02: detect HOW (implementation) language vs WHAT (behaviour) language.
-3. REQ-R03: verify "shall" is used; flag "should", "may", "can", "must", etc.
-4. REQ-R04: detect compound requirements — count distinct "shall" obligations.
-5. REQ-R05: assess abstraction level relative to system hierarchy.
-6. REQ-R06: detect implicit assumptions; verify they are explicitly stated.
-7. WORDING — check all AMBIGUOUS TERMS categories for forbidden vocabulary.
-8. MORPHOLOGY — for each sentence, check all bad-practice categories from the
-   SENTENCE MORPHOLOGY section above:
-     negation_issues          (double/hidden negation, negative form)
-     structural_complexity    (long sentences >30 words, compound, nested conditions)
-     ambiguity_prone_structures (ambiguous pronouns, unclear references)
-     passive_voice            (agentless passive)
-     modality_issues          (mixed modals, weak modals)
-     logical_issues           (and/or, implicit conditions, temporal ambiguity)
-     vagueness_in_structure   (etc., open-ended lists, fragments)
-9. STRUCTURAL RULES — apply WORD-S01 through WORD-S06 checks.
-10. State PASSES (✓) or FAILS (✗) with failure_severity per rule/check.
-11. Give a per-requirement correctness score (0-100%).
+INSTRUCTIONS — Verify the satisfaction of each of the previous rules 
+1. Check each rule. The rule passes if all checks pass/
+2. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
 
-OUTPUT FORMAT per requirement:
+OUTPUT FORMAT:
 ─────────────────────────────────────────────────
 [REQ-ID]: [first 60 chars...]
 ─────────────────────────────────────────────────
-  REQ-R01 [SEVERITY] ✓/✗  — [intent vs system definition]
-  REQ-R02 [SEVERITY] ✓/✗  — [HOW vs WHAT analysis]
-  REQ-R03 [SEVERITY] ✓/✗  — [modal verb: "X" used]
-  REQ-R04 [SEVERITY] ✓/✗  — [N obligations found]
-  REQ-R05 [SEVERITY] ✓/✗  — [abstraction assessment]
-  REQ-R06 [SEVERITY] ✓/✗  — [implicit assumptions found or none]
-  WORDING [SEVERITY] ✓/✗  — [ambiguous terms found: list, or "none"]
-  MORPHOLOGY:
-    negation_issues          ✓/✗  — [finding or "none"]
-    structural_complexity    ✓/✗  — [finding or "none"]
-    ambiguity_prone_structures ✓/✗ — [finding or "none"]
-    passive_voice            ✓/✗  — [finding or "none"]
-    modality_issues          ✓/✗  — [finding or "none"]
-    logical_issues           ✓/✗  — [finding or "none"]
-    vagueness_in_structure   ✓/✗  — [finding or "none"]
-  STRUCTURAL (WORD-S01–S06): [pass/fail summary per rule]
-  Score: XX/100
-─────────────────────────────────────────────────
+  REQ-XXX [SEVERITY] ✓/✗  — [explanation]
+─────────────────────────────────────────────────"""
 
-OVERALL CORRECTNESS SCORE: XX/100
-SUMMARY: [2-3 sentence paragraph]"""
+    def human_fn(req, rag_ctx):
+        return f"Perform correctness analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
 
-    req_text = json.dumps(state["requirements"], indent=2)
-    response  = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Perform correctness analysis:\n\n{req_text}")
-    ])
-    return {"correctness_findings": response.content}
+    return _run_per_req(state, "Correctness §5.2", sys_fn, human_fn, "correctness_findings")
 
 
 # ─────────────────────────────────────────────
-# Agent 7: Recommender
+# Agent 7: Wording & Morphology  — per req  (NEW)
+# ─────────────────────────────────────────────
+
+def wording_agent(state: ValidationState) -> ValidationState:
+    """
+    Dedicated wording and sentence morphology agent.
+    Checks all rules from wording_rules.json per requirement:
+      • Ambiguous / unverifiable terms (all 11 categories)
+      • Weak modal verbs
+      • Forbidden patterns
+      • Sentence morphology bad practices (all 7 categories)
+      • Structural rules WORD-S01 through WORD-S06
+    One LLM call per requirement.
+    """
+    wording_ref = format_wording_for_prompt()
+
+    def sys_fn(req, rag_ctx):
+        if len(rag_ctx) < 10:
+            return "wording requirements vocabulary ambiguous terms morphology"
+        return f"""You are an {STANDARD} wording and sentence morphology auditor.
+
+{_severity_legend()}
+
+{wording_ref}
+{rag_ctx}
+
+INSTRUCTIONS — Analyse THIS SINGLE REQUIREMENT for wording and morphology only.
+Work through EVERY category given before.
+
+OUTPUT FORMAT — use EXACTLY this structure:
+─────────────────────────────────────────────────
+[REQ-ID]: [first 60 chars of text...]
+─────────────────────────────────────────────────
+WEAK MODALS:
+  REQ-R03 [LOW] ✓/✗  — [terms found, or "none"]
+
+AMBIGUOUS TERMS:
+  REQ-C02 [HIGH] ✓/✗  — [term "X" [category]: description, or "none"]
+  (one line per term found; ✓ if none in category)
+
+FORBIDDEN PATTERNS:
+  [pattern] [SEVERITY] ✓/✗  — [occurrence quoted, or "none"]
+
+MORPHOLOGY:
+  negation_issues           [SEVERITY] ✓/✗  — [finding or "none"]
+  structural_complexity     [SEVERITY] ✓/✗  — [finding or "none"]
+  ambiguity_prone_structures [SEVERITY] ✓/✗  — [finding or "none"]
+  passive_voice             [SEVERITY] ✓/✗  — [finding or "none"]
+  modality_issues           [SEVERITY] ✓/✗  — [finding or "none"]
+  logical_issues            [SEVERITY] ✓/✗  — [finding or "none"]
+  vagueness_in_structure    [SEVERITY] ✓/✗  — [finding or "none"]
+
+STRUCTURAL:
+  WORD-S01 [SEVERITY] ✓/✗  — [finding or "pass"]
+  WORD-S02 [SEVERITY] ✓/✗  — [finding or "pass"]
+  WORD-S03 [SEVERITY] ✓/✗  — [finding or "pass"]
+  WORD-S04 [SEVERITY] ✓/✗  — [finding or "pass"]
+  WORD-S05 [SEVERITY] ✓/✗  — [finding or "pass"]
+  WORD-S06 [SEVERITY] ✓/✗  — [finding or "pass"]
+
+WORDING SCORE: XX/100
+─────────────────────────────────────────────────"""
+
+    def human_fn(req, rag_ctx):
+        return (
+            f"Perform wording and morphology analysis on this single requirement:\n\n"
+            f"{json.dumps(req, indent=2)}"
+        )
+
+    return _run_per_req(state, "Wording & Morphology", sys_fn, human_fn, "wording_findings")
+
+
+# ─────────────────────────────────────────────
+# Agent 8: Recommender  — per req
 # ─────────────────────────────────────────────
 
 def recommender_agent(state: ValidationState) -> ValidationState:
     """
-    Produces per-requirement corrected rewrites using:
-      - Violations flagged by the five analysis agents
-      - Checks and severities from rules.json (for precise rule references)
-      - RAG context for project-specific vocabulary and values
+    Produces per-requirement corrected rewrites.
+    Receives per-req findings dicts; passes only the relevant req's findings
+    to each LLM call so context stays tight.
+    Returns recommendations: Dict[req_id, rewrite_text].
     """
     print("  [Recommendation creation]")
+    _emit("agent_start", label="Recommender")
     llm = get_llm(temperature=0.15)
     rag = get_rag()
 
-    # Build compact rule reference from rules.json for the rewriter
+    # Build compact rule reference
     all_rules_summary = []
     for cat in ("correctness", "completeness", "consistency", "verifiability", "traceability"):
         for rule in get_rules(cat):
@@ -705,24 +808,14 @@ def recommender_agent(state: ValidationState) -> ValidationState:
             severity = rule["failure_severity"]
             checks   = "; ".join(rule.get("checks", []))
             all_rules_summary.append(f"  {rid} [{severity}] {title}: {checks}")
-    rules_ref = "\n".join(all_rules_summary)
-
-    all_findings = (
-        f"=== COMPLETENESS (§5.3) ===\n{state['completeness_findings']}\n\n"
-        f"=== CONSISTENCY (§5.4) ===\n{state['consistency_findings']}\n\n"
-        f"=== VERIFIABILITY (§5.5) ===\n{state['verifiability_findings']}\n\n"
-        f"=== TRACEABILITY (§5.6) ===\n{state['traceability_findings']}\n\n"
-        f"=== CORRECTNESS (§5.2) ===\n{state['correctness_findings']}\n\n"
-        f"=== MULTI-REQUIREMENT ANALYSIS ===\n{state.get('multi_req_findings', '')}"
-    )
-
+    rules_ref   = "\n".join(all_rules_summary)
     ears_ref    = format_ears_for_prompt()
     wording_ref = format_wording_for_prompt()
 
     system_prompt = f"""You are a senior aerospace requirements engineer rewriting
 non-compliant requirements to conform to {STANDARD} (v{VERSION}).
 
-COMPLETE RULES REFERENCE (rule_id [severity] title: check steps):
+COMPLETE RULES REFERENCE:
 {rules_ref}
 
 {wording_ref}
@@ -731,52 +824,27 @@ COMPLETE RULES REFERENCE (rule_id [severity] title: check steps):
 
 REWRITING RULES — apply ALL of the following:
 
-1. EARS PATTERN SELECTION — choose the most appropriate pattern for every rewrite:
-   • No trigger, state, or condition present → Ubiquitous
-     Template: The <system name> shall <system response>.
-   • Discrete event or stimulus              → Event-Driven  (WHEN)
-     Template: WHEN <trigger> [<precondition>], the <system name> shall <system response>.
-   • Fault, failure, or off-nominal event    → Unwanted Behavior  (IF … THEN)
-     Template: IF <unwanted condition>, THEN the <system name> shall <system response>.
-   • Continuous operating state or mode      → State-Driven  (WHILE)
-     Template: WHILE <system state>, the <system name> shall <system response>.
-   • Optional feature or configuration       → Optional Feature  (WHERE)
-     Template: WHERE <feature is included>, the <system name> shall <system response>.
-   • Multiple triggers / states              → Complex  (combinations)
-   IMPORTANT: Do NOT default to Ubiquitous when a trigger, state, fault scenario,
-   or applicability condition is present or clearly implied in the original text.
+1. EARS PATTERN SELECTION — choose the most appropriate pattern:
+   • No trigger/state/condition present   → Ubiquitous
+   • Discrete event or stimulus           → Event-Driven  (WHEN)
+   • Fault, failure, off-nominal event    → Unwanted Behavior  (IF … THEN)
+   • Continuous operating state or mode   → State-Driven  (WHILE)
+   • Optional feature or configuration    → Optional Feature  (WHERE)
+   • Multiple triggers / states           → Complex
+   Do NOT default to Ubiquitous when a trigger, state, fault scenario,
+   or applicability condition is present or implied.
 
-2. MODAL VERB — use "shall" for every binding obligation (fixes REQ-R03, WORD weak_modals).
+2. MODAL VERB — use "shall" for every binding obligation.
+3. ONE OBLIGATION PER STATEMENT — split compound requirements into -A, -B, … each with own EARS pattern.
+4. MEASURABLE CRITERIA — replace every ambiguous/vague term with numeric value + unit + tolerance.
+5. SENTENCE MORPHOLOGY — positive active voice, named subject, ≤30 words, no open-ended lists.
+6. WHAT NOT HOW — behaviour not implementation.
+7. PERFORMANCE VALUES — numeric value + unit + tolerance for every criterion.
+8. SAFETY — reference DAL level for safety-critical requirements.
+9. VERIFICATION — append [Verification: Test/Analysis/Inspection/Demonstration].
+10. VOCABULARY — use exact terminology from RAG project documents where available.
 
-3. ONE OBLIGATION PER STATEMENT — split compound requirements into separate -A, -B, …
-   statements, each with its own EARS pattern (fixes REQ-R04, WORD-S01).
-
-4. MEASURABLE CRITERIA — replace every ambiguous or vague term with a numeric
-   value + unit + tolerance. Remove all terms from the AMBIGUOUS TERMS categories
-   (fixes REQ-C02, REQ-V02, REQ-V03).
-
-5. SENTENCE MORPHOLOGY — fix all structural defects:
-   • Positive obligation — rewrite negative requirements in positive form
-   • No double/hidden negation — eliminate "not inactive", "unless", etc. (WORD-S04)
-   • Active voice — "<Subject> shall <verb> <object>" (WORD-S02)
-   • Explicit named subject — no "it", "this", "they" (WORD-S03, WORD-S05)
-   • No ambiguous pronouns — replace with the explicit referent
-   • Sentence ≤30 words — split or restructure if longer (WORD-S06)
-   • No open-ended lists — replace "etc.", "including but not limited to"
-
-6. WHAT NOT HOW — state the required behaviour, not the implementation (fixes REQ-R02).
-
-7. PERFORMANCE VALUES — include numeric value + unit + tolerance for every
-   performance criterion (fixes REQ-V02, REQ-K03).
-
-8. SAFETY — reference the DAL level for safety-critical requirements (fixes REQ-C05).
-
-9. VERIFICATION — append [Verification: Test/Analysis/Inspection/Demonstration]
-   to each rewritten statement (fixes REQ-V04).
-
-10. VOCABULARY — use exact terminology and numeric values from RAG project documents.
-
-OUTPUT FORMAT — one block per requirement:
+OUTPUT FORMAT — produce EXACTLY this block:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REQUIREMENT: [ID]
@@ -787,26 +855,39 @@ ORIGINAL:
 
 EARS PATTERN SELECTED: [pattern name] — [one-sentence justification]
 
-VIOLATIONS:
-  • [REQ-Xxx / WORD-Sxx] [SEVERITY] — [violation description + check that failed]
+VIOLATIONS ADDRESSED:
+  • [rule_id / WORD-Sxx / morphology_category] [SEVERITY] — [violation description]
 
 CORRECTED REWRITE:
-  [ID][-A/-B/…]: [EARS-structured rewritten statement] [Verification: T/A/I/D]
+  [ID][-A/-B/…]: [EARS-structured statement] [Verification: T/A/I/D]
 
 CHANGES EXPLAINED:
-  • "[original wording]" → "[new wording]"  (fixes [rule_id]: [check step])
+  • "[original wording]" → "[new wording]"  (fixes [rule_id]: [check])
 
 RAG VOCABULARY USED:
-  • [term or value from project documents, or "none"]
+  • [term from project docs, or "none"]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If a requirement is fully compliant across ALL rules AND already follows
-an EARS pattern correctly, write exactly:
-✓ [ID]: COMPLIANT — [EARS pattern name] pattern already applied."""
+If fully compliant: ✓ [ID]: COMPLIANT — [EARS pattern] already applied."""
 
-    parts = []
-    for req in state["requirements"]:
+    reqs    = state["requirements"]
+    total   = len(reqs)
+    out     = {}
+
+    # Per-req findings dicts from all agents
+    comp_f   = state.get("completeness_findings",  {})
+    verif_f  = state.get("verifiability_findings", {})
+    trace_f  = state.get("traceability_findings",  {})
+    corr_f   = state.get("correctness_findings",   {})
+    word_f   = state.get("wording_findings",       {})
+    consist  = state.get("consistency_findings",   "")
+
+    for idx, req in enumerate(reqs):
+        rid = req.get("id", f"REQ-{idx+1}")
+        _emit("req_progress", current=idx, total=total, label="Recommender")
+
+        # RAG context for this specific requirement
         req_rag_ctx = ""
         if rag.is_ready():
             query = (
@@ -815,74 +896,101 @@ an EARS pattern correctly, write exactly:
             )
             req_rag_ctx = _rag_block(query, k=4)
 
+        # Gather only THIS requirement's findings from each agent
+        req_findings = (
+            f"=== COMPLETENESS (§5.3) ===\n{comp_f.get(rid, '(not analysed)')}\n\n"
+            f"=== VERIFIABILITY (§5.5) ===\n{verif_f.get(rid, '(not analysed)')}\n\n"
+            f"=== TRACEABILITY (§5.6) ===\n{trace_f.get(rid, '(not analysed)')}\n\n"
+            f"=== CORRECTNESS (§5.2) ===\n{corr_f.get(rid, '(not analysed)')}\n\n"
+            f"=== WORDING & MORPHOLOGY ===\n{word_f.get(rid, '(not analysed)')}\n\n"
+            f"=== CONSISTENCY (§5.4 — cross-req) ===\n{consist}"
+        )
+
         user_message = (
             f"REQUIREMENT:\n{json.dumps(req, indent=2)}\n\n"
             f"{req_rag_ctx}"
             f"SYSTEM CONTEXT:\n{state.get('system_context', 'N/A')}\n\n"
-            f"AUDIT FINDINGS:\n{all_findings}"
+            f"AUDIT FINDINGS FOR {rid}:\n{req_findings}"
         )
 
         response = llm.invoke([
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message)
+            HumanMessage(content=user_message),
         ])
-        parts.append(response.content)
+        out[rid] = response.content
+        _emit("req_progress", current=idx + 1, total=total, label="Recommender")
 
-    return {"recommendations": "\n\n".join(parts)}
+    _emit("agent_done", label="Recommender")
+    return {"recommendations": out}
 
 
 # ─────────────────────────────────────────────
-# Agent 8: Reporter
+# Agent 9: Reporter
 # ─────────────────────────────────────────────
 
 def reporter_agent(state: ValidationState) -> ValidationState:
     """
-    Synthesises all agent findings into the formal compliance report.
-    The CORRECTED REWRITES section is appended by direct string concatenation —
-    NOT passed through the LLM — to prevent placeholder substitution failure.
+    Produces the final compliance report with NO synthesis — pure assembly.
+
+    Report layout:
+      Section 1 — ANALYSIS METADATA + EXECUTIVE SUMMARY + SCORES  (LLM, concise)
+      Section 2 — PER-REQUIREMENT FULL AUDIT REPORT  (Python, verbatim, one block per req)
+                    For each req:
+                      ORIGINAL TEXT
+                      COMPLETENESS findings   (verbatim from completeness_agent)
+                      VERIFIABILITY findings  (verbatim from verifiability_agent)
+                      TRACEABILITY findings   (verbatim from traceability_agent)
+                      CORRECTNESS findings    (verbatim from correctness_agent)
+                      WORDING & MORPHOLOGY    (verbatim from wording_agent)
+                      REWRITE PROPOSAL        (verbatim from recommender_agent)
+      Section 3 — CONSISTENCY FINDINGS  (verbatim, bulk — cross-req)
+      Section 4 — MULTI-REQUIREMENT ANALYSIS  (verbatim)
+      Section 5 — REQUIREMENT CLUSTERS  (verbatim)
     """
     print("  [Report creation]")
     llm = get_llm(temperature=0.2)
-
     rag = get_rag()
+
     rag_status = (
         f"RAG Vector Store  : ACTIVE — {rag.chunk_count()} chunks indexed\n"
         f"Indexed sources   : {', '.join(rag.list_sources()) or 'none'}"
         if state.get("rag_available")
-        else "RAG Vector Store  : NOT LOADED (generic analysis — no project documents)"
+        else "RAG Vector Store  : NOT LOADED (generic analysis)"
     )
-
-    # List BLOCKING rule IDs from rules.json for the report header
     blocking_ids = []
     for cat in ("completeness", "consistency", "verifiability", "traceability", "correctness"):
         blocking_ids.extend(r["rule_id"] for r in blocking_rules(cat))
-    blocking_note = f"BLOCKING rules (must all pass for approval): {', '.join(blocking_ids)}"
 
-    system_prompt = f"""You are a senior aerospace systems engineer producing a formal
-{STANDARD} Requirements Validation Report (rules v{VERSION}).
+    n_reqs = len(state.get("requirements", []))
+    meta   = state.get("input_metadata", {})
+
+    # ── Section 1: LLM writes only metadata + summary + scores ──────────
+    llm_system = f"""You are a senior aerospace systems engineer writing ONLY the
+summary header of a formal {STANDARD} Requirements Validation Report (rules v{VERSION}).
 
 {rag_status}
-{blocking_note}
+BLOCKING rules: {', '.join(blocking_ids)}
 
-Generate ONLY the sections below. Do NOT include a corrected rewrites section —
-it will be appended separately in code.
+Write ONLY the sections below. Be concise. Reference specific Req IDs and Rule IDs.
+The full per-requirement detail follows in code — do NOT repeat individual findings.
 
 ══════════════════════════════════════════════════════════════════════
           {STANDARD} REQUIREMENTS VALIDATION REPORT
 ══════════════════════════════════════════════════════════════════════
 
-EXECUTIVE SUMMARY
-─────────────────
-[3-4 sentences: overall compliance status, most critical issues, RAG impact]
-
 ANALYSIS METADATA
 ─────────────────
   Standard              : {STANDARD} v{VERSION}
-  Project               : {state.get("input_metadata", {}).get("project", "—")}
-  Purpose               : {state.get("input_metadata", {}).get("purpose", "—")}
-  Requirements analysed : [N]
+  Project               : {meta.get("project", "—")}
+  Purpose               : {meta.get("purpose", "—")}
+  Requirements analysed : {n_reqs}
   RAG knowledge base    : [ACTIVE — N chunks / NOT LOADED]
   Indexed source docs   : [list or "none"]
+
+EXECUTIVE SUMMARY
+─────────────────
+[3–4 sentences: overall compliance posture, the 2–3 most critical issues
+(cite Req ID + Rule ID), validation status.]
 
 OVERALL COMPLIANCE SCORE: XX/100
   Weighted: Completeness 25% + Verifiability 25% + Consistency 20%
@@ -890,123 +998,166 @@ OVERALL COMPLIANCE SCORE: XX/100
 
 COMPLIANCE BREAKDOWN
 ────────────────────
-  §5.2 Correctness     : XX/100  [●●●○○]
-  §5.3 Completeness    : XX/100  [●●●○○]
-  §5.4 Consistency     : XX/100  [●●●○○]
-  §5.5 Verifiability   : XX/100  [●●●○○]
-  §5.6 Traceability    : XX/100  [●●●○○]
+  §5.2 Correctness        : XX/100
+  §5.3 Completeness       : XX/100
+  §5.4 Consistency        : XX/100
+  §5.5 Verifiability      : XX/100
+  §5.6 Traceability       : XX/100
+  Wording & Morphology    : XX/100
 
 BLOCKING FINDINGS  (must resolve before approval)
 ──────────────────────────────────────────────────
-  [Req ID] | [Rule ID] | [One-line description]
-  (or "None" if no BLOCKING violations found)
+  [Req ID] | [Rule ID] | [one-line description]   (or "None detected")
 
-CRITICAL FINDINGS  (HIGH severity — must fix)
-─────────────────────────────────────────────
-  [Req ID] | [Rule ID] | [Description]
+CRITICAL FINDINGS  (HIGH severity)
+───────────────────────────────────
+  [Req ID] | [Rule ID] | [one-line description]
 
-MAJOR FINDINGS  (MEDIUM severity — should fix)
-───────────────────────────────────────────────
-  [Req ID] | [Rule ID] | [Description]
+MAJOR FINDINGS  (MEDIUM severity)
+──────────────────────────────────
+  [Req ID] | [Rule ID] | [one-line description]
 
-MINOR FINDINGS  (LOW severity — recommended)
-─────────────────────────────────────────────
-  [Req ID] | [Rule ID] | [Description]
-
-DETAILED FINDINGS BY SECTION
-─────────────────────────────
-
-§5.2 CORRECTNESS
-[3-5 sentence prose summary referencing specific rule IDs and req IDs]
-
-§5.3 COMPLETENESS
-[3-5 sentence prose summary]
-
-§5.4 CONSISTENCY
-[3-5 sentence prose summary]
-
-§5.5 VERIFIABILITY
-[3-5 sentence prose summary]
-
-§5.6 TRACEABILITY
-[3-5 sentence prose summary]
-
-MULTI-REQUIREMENT ANALYSIS
-[Summarise contradiction / overlap / redundancy findings.
- State: N pairs analysed, N contradictions (list req IDs), N overlaps, N redundancies.
- Contradictions go directly into BLOCKING FINDINGS above.]
+MINOR FINDINGS  (LOW severity)
+────────────────────────────────
+  [Req ID] | [Rule ID] | [one-line description]
 
 PRIORITISED ACTION PLAN
 ────────────────────────
-[Numbered list ordered BLOCKING → HIGH → MEDIUM → LOW.
- Each item: N. [Priority] [Req ID] [Rule ID] — one-line action to take]
+[Numbered list BLOCKING → HIGH → MEDIUM → LOW.
+ Each: N. [Priority] [Req ID] [Rule ID] — one-line action]
 
 VALIDATION STATUS: [PASS / CONDITIONAL PASS / FAIL]
-[Two-sentence justification. Rule: FAIL if any BLOCKING rule is violated;
- CONDITIONAL PASS if only HIGH/MEDIUM violations; PASS if only LOW or none.]"""
+[Two-sentence justification.]"""
 
-    user_message = f"""Synthesise these findings into the formal report:
+    # Feed the per-req dicts as summaries to the LLM (for scoring)
+    reqs       = state.get("requirements", [])
+    comp_f     = state.get("completeness_findings",  {})
+    verif_f    = state.get("verifiability_findings", {})
+    trace_f    = state.get("traceability_findings",  {})
+    corr_f     = state.get("correctness_findings",   {})
+    word_f     = state.get("wording_findings",       {})
+    consist    = state.get("consistency_findings",   "")
+    recs       = state.get("recommendations",        {})
 
-REQUIREMENTS:
-{json.dumps(state['requirements'], indent=2)}
+    # Compact summary for the LLM (just scores + violations, not full text)
+    findings_summary = ""
+    for req in reqs:
+        rid = req.get("id", "")
+        findings_summary += f"\n--- {rid} ---\n"
+        for label, fd in [
+            ("Completeness", comp_f), ("Verifiability", verif_f),
+            ("Traceability", trace_f), ("Correctness", corr_f),
+            ("Wording", word_f),
+        ]:
+            block = fd.get(rid, "")
+            # Extract just score lines and ✗ lines for the summary
+            score_lines = [l for l in block.splitlines()
+                           if "Score:" in l or "✗" in l or "SCORE:" in l.upper()]
+            findings_summary += f"  [{label}] " + " | ".join(score_lines[:6]) + "\n"
 
-=== COMPLETENESS (§5.3) ===
-{state['completeness_findings']}
-
-=== CONSISTENCY (§5.4) ===
-{state['consistency_findings']}
-
-=== VERIFIABILITY (§5.5) ===
-{state['verifiability_findings']}
-
-=== TRACEABILITY (§5.6) ===
-{state['traceability_findings']}
-
-=== CORRECTNESS (§5.2) ===
-{state['correctness_findings']}
-
-=== MULTI-REQUIREMENT ANALYSIS (contradictions / overlaps / redundancies) ===
-{state.get('multi_req_stats', {})}
-{state.get('multi_req_findings', 'Not run.')}"""
-
-    response = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_message)
-    ])
-
-    # ── Direct-concatenation sections (never via LLM to avoid placeholder failure) ──
-
-    # Clusters summary
-    clusters_block = (
-        "\n\nREQUIREMENT CLUSTERS & COMPARISON PIPELINE\n"
-        "───────────────────────────────────────────\n"
-        + (state.get("clusters_summary", "") or "Not run.")
+    llm_user = (
+        f"CONSISTENCY (§5.4 — bulk):\n{consist}\n\n"
+        f"MULTI-REQ:\n{state.get('multi_req_findings', 'Not run.')}\n\n"
+        f"PER-REQ FINDINGS SUMMARY:\n{findings_summary}"
     )
 
-    # Full multi-req findings (already formatted by comparator)
+    summary_block = llm.invoke([
+        SystemMessage(content=llm_system),
+        HumanMessage(content=llm_user),
+    ]).content.rstrip()
+
+    # ── Section 2: Per-requirement full audit report (Python, verbatim) ──
+    W   = 70
+    SEP = "━" * W
+    DIV = "\n" + "═" * W + "\n"
+    HR  = "─" * W
+
+    per_req_lines = [
+        "═" * W,
+        "  PER-REQUIREMENT FULL AUDIT REPORT",
+        "  (verbatim agent outputs — no synthesis, no omissions)",
+        "═" * W,
+    ]
+
+    for req in reqs:
+        rid      = req.get("id", "?")
+        orig_txt = req.get("text", "")
+        rewrite  = recs.get(rid, "")
+
+        per_req_lines += [
+            "",
+            SEP,
+            f"  REQUIREMENT: {rid}",
+            SEP,
+            f"  ORIGINAL TEXT:",
+            f"    {orig_txt}",
+            "",
+        ]
+
+        # Five per-req agent outputs verbatim
+        for section_label, findings_dict in [
+            ("§5.3 COMPLETENESS",      comp_f),
+            ("§5.5 VERIFIABILITY",     verif_f),
+            ("§5.6 TRACEABILITY",      trace_f),
+            ("§5.2 CORRECTNESS",       corr_f),
+            ("WORDING & MORPHOLOGY",   word_f),
+        ]:
+            block = findings_dict.get(rid, "").strip()
+            per_req_lines.append(f"  ┌─ {section_label}")
+            if block:
+                for line in block.splitlines():
+                    per_req_lines.append("  │  " + line)
+            else:
+                per_req_lines.append("  │  (no findings)")
+            per_req_lines.append("  └" + "─" * (W - 3))
+            per_req_lines.append("")
+
+        # Rewrite proposal verbatim
+        per_req_lines.append("  ┌─ REWRITE PROPOSAL")
+        if rewrite.strip():
+            for line in rewrite.strip().splitlines():
+                per_req_lines.append("  │  " + line)
+        else:
+            per_req_lines.append("  │  (no rewrite generated)")
+        per_req_lines.append("  └" + "─" * (W - 3))
+
+    per_req_block = "\n".join(per_req_lines)
+
+    # ── Section 3: Consistency (bulk) ────────────────────────────────────
+    consistency_block = (
+        DIV
+        + "  §5.4 CONSISTENCY FINDINGS  (cross-requirement — bulk analysis)\n"
+        + "═" * W + "\n"
+        + (consist or "Not run.")
+    )
+
+    # ── Section 4: Multi-req findings ────────────────────────────────────
     multi_block = (
-        "\n\nFULL MULTI-REQUIREMENT FINDINGS\n"
-        "────────────────────────────────\n"
-        + (state.get("multi_req_findings", "") or "Not run.")
+        DIV
+        + "  MULTI-REQUIREMENT ANALYSIS  (contradictions / overlaps / redundancies)\n"
+        + "═" * W + "\n"
+        + (state.get("multi_req_findings") or "Not run.")
     )
 
-    # Corrected rewrites
-    rewrites = state.get("recommendations", "").strip()
-    rewrites_section = (
-        "\n\nCORRECTED REQUIREMENT REWRITES\n"
-        "───────────────────────────────\n"
-        + (rewrites if rewrites else "No rewrites generated.")
+    # ── Section 5: Clusters ───────────────────────────────────────────────
+    clusters_block = (
+        DIV
+        + "  REQUIREMENT CLUSTERS\n"
+        + "═" * W + "\n"
+        + (state.get("clusters_summary") or "Not run.")
     )
 
     final_report = (
-        response.content.rstrip()
-        + clusters_block
+        summary_block
+        + "\n\n" + per_req_block
+        + consistency_block
         + multi_block
-        + rewrites_section
-        + "\n\n══════════════════════════════════════════════════════════════════════"
+        + clusters_block
+        + "\n" + "═" * W
     )
 
     return {"final_report": final_report}
+
 
 
 # ─────────────────────────────────────────────
@@ -1015,20 +1166,16 @@ REQUIREMENTS:
 
 def multi_req_agent(state: ValidationState) -> ValidationState:
     """
-    LangGraph node that wraps the full 4-phase multi-requirement pipeline:
-      Phase 1 — Normalizer  : canonical structured form per requirement
-      Phase 2 — Clusterer   : group by subject / function / interface / mode
-      Phase 3 — Filter      : prune pairs that cannot conflict
-      Phase 4 — Comparator  : diagnose contradiction / overlap / redundancy
-
-    Runs after all single-requirement agents so it can reference their
-    findings if needed, and before the recommender so its results feed
-    into corrective rewrites.
+    LangGraph node wrapping the full 4-phase multi-requirement pipeline.
+    Runs after all single-requirement agents.
     """
+    _emit("agent_start", label="Multi-req analysis")
     result = run_multi_req_pipeline(
         requirements=state["requirements"],
         system_context=state.get("system_context", ""),
+        progress_cb=_progress_cb,
     )
+    _emit("agent_done", label="Multi-req analysis")
     return {
         "normalized_requirements": result["normalized_requirements"],
         "clusters_summary":        result["clusters_summary"],
@@ -1042,9 +1189,7 @@ def multi_req_agent(state: ValidationState) -> ValidationState:
 # ─────────────────────────────────────────────
 
 def build_validation_graph() -> StateGraph:
-    """
-    LangGraph workflow
-    """
+    """LangGraph workflow — one node per agent."""
     workflow = StateGraph(ValidationState)
 
     workflow.add_node("orchestrator",  orchestrator_agent)
@@ -1053,7 +1198,8 @@ def build_validation_graph() -> StateGraph:
     workflow.add_node("verifiability", verifiability_agent)
     workflow.add_node("traceability",  traceability_agent)
     workflow.add_node("correctness",   correctness_agent)
-    workflow.add_node("multi_req",     multi_req_agent)     # ← NEW 4-phase pipeline
+    workflow.add_node("wording",       wording_agent)       # ← NEW
+    workflow.add_node("multi_req",     multi_req_agent)
     workflow.add_node("recommender",   recommender_agent)
     workflow.add_node("reporter",      reporter_agent)
 
@@ -1063,8 +1209,9 @@ def build_validation_graph() -> StateGraph:
     workflow.add_edge("consistency",   "verifiability")
     workflow.add_edge("verifiability", "traceability")
     workflow.add_edge("traceability",  "correctness")
-    workflow.add_edge("correctness",   "multi_req")         # ← runs after single-req agents
-    workflow.add_edge("multi_req",     "recommender")       # ← multi-req findings feed recommender
+    workflow.add_edge("correctness",   "wording")           # ← NEW edge
+    workflow.add_edge("wording",       "multi_req")
+    workflow.add_edge("multi_req",     "recommender")
     workflow.add_edge("recommender",   "reporter")
     workflow.add_edge("reporter",      END)
 
@@ -1075,17 +1222,22 @@ def build_validation_graph() -> StateGraph:
 # Public API
 # ─────────────────────────────────────────────
 
+def set_progress_callback(cb) -> None:
+    """Register a progress callback before calling validate_requirements."""
+    global _progress_cb
+    _progress_cb = cb
+
+
 def validate_requirements(requirements_text: str) -> dict:
     """
     Main entry point. Runs the full multi-agent validation pipeline.
 
     Args:
-        requirements_text: JSON string (or file path) in the canonical format:
+        requirements_text: JSON string in canonical format:
                            { "metadata": {...}, "requirements": [{...}, ...] }
 
     Returns:
-        Full state dict including all agent findings, per-requirement
-        corrected rewrites, and the final compliance report.
+        Full state dict including all agent findings and the final report.
     """
     graph = build_validation_graph()
 
@@ -1094,15 +1246,20 @@ def validate_requirements(requirements_text: str) -> dict:
         "input_metadata":          {},
         "requirements":            [],
         "system_context":          "",
-        "completeness_findings":   "",
-        "consistency_findings":    "",
-        "verifiability_findings":  "",
-        "traceability_findings":   "",
-        "correctness_findings":    "",
-        "recommendations":         "",
-        "final_report":            "",
         "rag_available":           get_rag().is_ready(),
-        # Multi-requirement pipeline fields
+        # Per-req findings dicts — start empty, agents merge into them
+        "completeness_findings":   {},
+        "verifiability_findings":  {},
+        "traceability_findings":   {},
+        "correctness_findings":    {},
+        "wording_findings":        {},
+        # Bulk findings
+        "consistency_findings":    "",
+        # Per-req rewrites
+        "recommendations":         {},
+        # Final output
+        "final_report":            "",
+        # Multi-requirement
         "normalized_requirements": [],
         "clusters_summary":        "",
         "multi_req_findings":      "",

@@ -1,0 +1,29 @@
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                                                                        │
+│      ARP4754A Requirements Validation System  v2                                                                                                                                                       │
+│      Multi-Agent LangGraph  |  OLLAMA: llama3.1  |  Embeddings: nomic-embed-text                                                                                                                       │
+│                                                                                                                                                                                                        │
+│                                                                                                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────── Knowledge Base ────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ● RAG NOT LOADED                                                                                                                                                                                       │
+│   Running in generic mode. Use --docs <folder> to ingest system documents                                                                                                                              │
+│   for vocabulary-grounded analysis and context-aware recommendations.                                                                                                                                  │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+► Loaded 27 requirements from "Synthetic Aircraft Requirements Dataset" [INTENTIONALLY NON-COMPLIANT]
+  ⚠  Dataset is marked intentionally non-compliant
+  [Orchestrator] Loaded 27 requirements from "Synthetic Aircraft Requirements Dataset" [INTENTIONALLY NON-COMPLIANT]
+  [Completeness]
+  [Consistency]
+  [Verifiability]
+  [Traceability]
+  [Correctness]
+  [MultiReq] Phase 1/4 — Normalising requirements...
+  [MultiReq] Phase 2/4 — Clustering requirements...
+             351 candidate pairs generated
+  [MultiReq] Phase 3/4 — Filtering candidate pairs...
+             351 pairs remain after filtering
+  [MultiReq] Phase 4/4 — Comparing requirement pairs...
+  Multi-req analysis                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 162/162 100% 0:00:27
+⠙ Multi-req pair comparison 152/351 pairs ━━━━━━━━━━━━━╸                   152/351  43% 0:30:48
