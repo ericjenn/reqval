@@ -1,36 +1,41 @@
 """
 ARP4754A Validation Rules — single source of truth: rules.json
 ===============================================================
-All validation rules (ARP4754A analysis + wording + morphology) live in
-rules.json v3.0. This module loads that file once and exposes all constants
-and helper functions consumed by agents.py.
+All validation rules live in rules.json.  This module loads that file once
+and exposes constants and helpers consumed by agents.py.
 
-Public API (unchanged — agents.py requires no modification)
-───────────────────────────────────────────────────────────
+Design principle: ZERO hardcoded rule IDs.  All rule content is derived
+from the JSON structure (category names, field presence, tag patterns in
+check text) so that adding, removing, or renaming rules in rules.json
+requires no code changes here or in agents.py.
+
+Public API
+──────────
 Constants
-  STANDARD, VERSION, PURPOSE          str
-  RULESETS                            list[dict]
-  MANDATORY_MODAL_VERB                str
-  WEAK_MODAL_VERBS                    list[str]   from RULE-R03 checks
-  AMBIGUOUS_TERMS                     list[str]   flat, from RULE-C02 checks
-  AMBIGUOUS_TERMS_BY_CAT              dict        {cat_name: {severity, note, terms}}
-  FORBIDDEN_PATTERNS                  list[dict]  [{pattern, severity, note}]
-  SENTENCE_MORPHOLOGY                 dict        {cat: {severity, issues}}
-  STRUCTURAL_RULES                    list[dict]  [{rule_id, title, check, severity, …}]
-  EARS_PATTERNS                       list[dict]
-  DAL_LEVELS                          dict
+  STANDARD, VERSION, PURPOSE
+  RULESETS, MANDATORY_MODAL_VERB
+  WEAK_MODAL_VERBS, AMBIGUOUS_TERMS, AMBIGUOUS_TERMS_BY_CAT
+  FORBIDDEN_PATTERNS, SENTENCE_MORPHOLOGY, STRUCTURAL_RULES
+  EARS_PATTERNS, DAL_LEVELS
 
 Functions
-  get_ruleset(category)               → dict | None
-  get_rules(category)                 → list[dict]
-  format_rules_for_prompt(cat)        → str
-  format_all_rules_for_prompt()       → str
-  format_wording_for_prompt()         → str
-  format_ears_for_prompt()            → str
-  blocking_rules(category)            → list[dict]
-  rules_by_severity(cat, sev)         → list[dict]
-  severity_order(sev)                 → int
-  all_rule_ids()                      → list[str]
+  get_ruleset(category)
+  get_rules(category)
+  get_checks(category, rule_id)
+  format_rules_for_prompt(cat)
+  format_all_rules_for_prompt()
+  format_output_format(cat)         → per-req output-format block
+  format_consistency_output_format()
+  format_instructions(cat)          → numbered instruction list
+  format_consistency_instructions()
+  format_wording_output_format()
+  format_wording_instructions()
+  format_wording_for_prompt()
+  format_ears_for_prompt()
+  blocking_rules(category)
+  rules_by_severity(cat, sev)
+  severity_order(sev)
+  all_rule_ids()
 """
 
 from __future__ import annotations
@@ -51,8 +56,6 @@ if not _RULES_PATH.exists():
 with open(_RULES_PATH, encoding="utf-8") as _fh:
     _RAW = json.load(_fh)
 
-# ── Top-level metadata ────────────────────────────────────────────────────────
-
 STANDARD : str  = _RAW.get("standard", "ARP4754A")
 PURPOSE  : str  = _RAW.get("purpose",  "System Requirements Validation")
 VERSION  : str  = _RAW.get("version",  "3.0")
@@ -60,12 +63,21 @@ RULESETS : list = _RAW.get("rulesets", [])
 
 _RULESET_BY_CATEGORY: dict = {rs["category"]: rs for rs in RULESETS}
 
-# ── Modal verb ────────────────────────────────────────────────────────────────
-
 MANDATORY_MODAL_VERB: str = _RAW.get("mandatory_modal_verb", {}).get("verb", "shall")
 
+_EARS_SECTION  = _RAW.get("ears_patterns", {})
+EARS_PATTERNS: List[dict] = _EARS_SECTION.get("patterns", [])
+
+DAL_LEVELS = {
+    "A": "Catastrophic — Loss of aircraft or multiple fatalities",
+    "B": "Hazardous — Large reduction in safety margins, crew distress",
+    "C": "Major — Significant reduction in safety margins",
+    "D": "Minor — Slight reduction in safety margins",
+    "E": "No safety effect",
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Core accessors — defined BEFORE extraction helpers so get_rules() is usable
+# Core accessors
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_ruleset(category: str) -> Optional[dict]:
@@ -75,31 +87,11 @@ def get_rules(category: str) -> List[dict]:
     rs = get_ruleset(category)
     return rs["rules"] if rs else []
 
-def format_rules_for_prompt(category: str) -> str:
-    """Return a structured prompt block for the given category's ruleset."""
-    rs = get_ruleset(category)
-    if not rs:
-        return ""
-    origin = rs.get("origin", "")
-    desc   = rs.get("description", category)
-    header = f"{origin} — {desc}" if origin else desc
-    lines  = [header + "\n"]
-    for rule in rs.get("rules", []):
-        rid      = rule.get("rule_id", "???")
-        title    = rule.get("title", "")
-        obj      = rule.get("objective", "")
-        checks   = rule.get("checks", [])
-        severity = rule.get("failure_severity", "MEDIUM")
-        lines.append(f"┌─ {rid} · {title}  [SEVERITY: {severity}]")
-        lines.append(f"│  Objective : {obj}")
-        lines.append( "│  Checks    :")
-        for i, chk in enumerate(checks, 1):
-            lines.append(f"│    {i}. {chk}")
-        lines.append("└" + "─" * 60)
-    return "\n".join(lines)
-
-def format_all_rules_for_prompt() -> str:
-    return "\n\n".join(format_rules_for_prompt(rs["category"]) for rs in RULESETS)
+def get_checks(category: str, rule_id: str) -> List[str]:
+    for rule in get_rules(category):
+        if rule.get("rule_id") == rule_id:
+            return rule.get("checks", [])
+    return []
 
 def severity_order(severity: str) -> int:
     return {"BLOCKING": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(severity.upper(), 99)
@@ -114,111 +106,275 @@ def blocking_rules(category: str) -> List[dict]:
 def all_rule_ids() -> List[str]:
     return [r["rule_id"] for rs in RULESETS for r in rs.get("rules", [])]
 
+# ── Helper: strip sub-check ID prefix [RULE-XXX.y] ───────────────────────────
+
+def _strip_prefix(text: str) -> str:
+    return re.sub(r"^\[RULE-[A-Z0-9]+\.[a-z]\]\s*", "", text).strip()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Extraction helpers — run after get_rules() is defined
+# Prompt formatters — zero hardcoded rule IDs
+# ─────────────────────────────────────────────────────────────────────────────
+
+def format_rules_for_prompt(category: str) -> str:
+    """Structured prompt block for one category's ruleset."""
+    rs = get_ruleset(category)
+    if not rs:
+        return ""
+    origin = rs.get("origin", "")
+    desc   = rs.get("description", category)
+    header = f"{origin} — {desc}" if origin else desc
+    lines  = [header + "\n"]
+    for rule in rs.get("rules", []):
+        rid      = rule.get("rule_id", "???")
+        title    = rule.get("title", "")
+        obj      = rule.get("objective", "")
+        checks   = rule.get("checks", [])
+        severity = rule.get("failure_severity", "MEDIUM")
+        lines.append(f"┌─ {rid} · {title}  [SEVERITY: {severity}]")
+        if obj:
+            lines.append(f"│  Objective : {obj}")
+        lines.append("│  Checks    :")
+        for chk in checks:
+            lines.append(f"│    {chk}")
+        lines.append("└" + "─" * 60)
+    return "\n".join(lines)
+
+def format_all_rules_for_prompt() -> str:
+    return "\n\n".join(format_rules_for_prompt(rs["category"]) for rs in RULESETS)
+
+
+def format_output_format(category: str) -> str:
+    """
+    Per-requirement output-format block, generated from rules.json.
+    One result line per rule: rule_id, severity, pass/fail, title.
+    """
+    rules = get_rules(category)
+    if not rules:
+        return ""
+    lines = [
+        "─" * 49,
+        "[REQ-ID]: [first 60 chars of requirement text...]",
+        "─" * 49,
+    ]
+    for rule in rules:
+        rid   = rule["rule_id"]
+        sev   = rule["failure_severity"]
+        title = rule.get("title", "")
+        lines.append(f"  {rid} [{sev}] \u2713/\u2717  \u2014 [{title}: finding]")
+    lines.append("  Score: XX/100")
+    lines.append("─" * 49)
+    return "\n".join(lines)
+
+
+def format_consistency_output_format() -> str:
+    """Output format block for the bulk consistency agent."""
+    rules = get_rules("consistency")
+    lines = ["─" * 49]
+    for rule in rules:
+        rid   = rule["rule_id"]
+        sev   = rule["failure_severity"]
+        title = rule.get("title", "")
+        lines.append(f"{rid} [{sev}] \u2014 {title}")
+        lines.append("  [findings, or \"pass\"]")
+    lines += [
+        "─" * 49,
+        "OVERALL CONSISTENCY SCORE: XX/100",
+        "SUMMARY: [2-3 sentence paragraph]",
+    ]
+    return "\n".join(lines)
+
+
+def format_instructions(category: str) -> str:
+    """
+    Numbered instruction list for a per-requirement agent.
+    Generated from rules.json — each rule becomes one step.
+    """
+    rules = get_rules(category)
+    lines = []
+    for i, rule in enumerate(rules, 1):
+        rid    = rule["rule_id"]
+        title  = rule.get("title", "")
+        checks = rule.get("checks", [])
+        summary = "; ".join(_strip_prefix(c) for c in checks)
+        lines.append(f"{i}. {rid} ({title}): {summary}")
+    n = len(rules)
+    lines.append(f"{n+1}. State PASSES (\u2713) or FAILS (\u2717) with failure_severity per rule.")
+    lines.append(f"{n+2}. Give a per-requirement {category} score (0\u2013100).")
+    return "\n".join(lines)
+
+
+def format_consistency_instructions() -> str:
+    """Numbered instruction list for the bulk consistency agent."""
+    rules = get_rules("consistency")
+    lines = []
+    for i, rule in enumerate(rules, 1):
+        rid    = rule["rule_id"]
+        title  = rule.get("title", "")
+        checks = rule.get("checks", [])
+        summary = "; ".join(_strip_prefix(c) for c in checks)
+        lines.append(f"{i}. {rid} ({title}): {summary}")
+    n = len(rules)
+    lines.append(f"{n+1}. State PASSES (\u2713) or FAILS (\u2717) with failure_severity per check.")
+    return "\n".join(lines)
+
+
+def format_wording_output_format() -> str:
+    """Output format for the wording/morphology agent. Generated from rules.json."""
+    lines = [
+        "─" * 49,
+        "[REQ-ID]: [first 60 chars of text...]",
+        "─" * 49,
+    ]
+    wording_rules = get_rules("wording")
+    if wording_rules:
+        lines.append("WORDING:")
+        for rule in wording_rules:
+            rid   = rule["rule_id"]
+            sev   = rule["failure_severity"]
+            title = rule.get("title", "")
+            lines.append(f"  {rid} [{sev}] \u2713/\u2717  \u2014 [{title}]")
+    morph_rules = get_rules("morphology")
+    if morph_rules:
+        lines.append("")
+        lines.append("MORPHOLOGY:")
+        for rule in morph_rules:
+            rid   = rule["rule_id"]
+            sev   = rule["failure_severity"]
+            title = rule.get("title", "")
+            lines.append(f"  {rid} [{sev}] \u2713/\u2717  \u2014 [{title}]")
+    lines += ["", "WORDING SCORE: XX/100", "─" * 49]
+    return "\n".join(lines)
+
+
+def format_wording_instructions() -> str:
+    """Instruction list for the wording/morphology agent. Generated from rules.json."""
+    lines = [
+        "Work through EVERY rule below in order.",
+        "For each check step: state PASSES (\u2713) or FAILS (\u2717) and quote the offending text.",
+        "",
+    ]
+    step = 1
+    for category in ("wording", "morphology"):
+        for rule in get_rules(category):
+            rid    = rule["rule_id"]
+            title  = rule.get("title", "")
+            lines.append(f"STEP {step} \u2014 {rid}: {title}")
+            for chk in rule.get("checks", []):
+                lines.append(f"  \u2022 {_strip_prefix(chk)}")
+            lines.append("")
+            step += 1
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Extraction helpers — backward-compatible derived constants
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _extract_weak_modals() -> List[str]:
     """
-    Extract weak modal verbs from RULE-R03 check steps.
-    Each relevant line is indented and has the form "  verb — note".
+    Extract weak modal verbs from the correctness ruleset.
+    Matches check lines: 'Detect <adjective> modal|phrase|paraphrase 'verb''
+    No hardcoded rule IDs.
     """
-    result = []
+    result   = []
+    verb_re  = re.compile(
+        r"Detect\s+(?:[\w-]+\s+)*(?:modal|phrase|paraphrase)\s+'([^']+)'",
+        re.IGNORECASE,
+    )
     for rule in get_rules("correctness"):
-        if rule.get("rule_id") == "RULE-R03":
-            for chk in rule.get("checks", []):
-                # Lines like "  should      — recommendation, not obligation"
-                m = re.match(r"^\s{2,6}(\S+(?:\s+\S+)*?)\s+—\s+", chk)
-                if m:
-                    result.append(m.group(1).strip())
-            break
+        for chk in rule.get("checks", []):
+            clean = _strip_prefix(chk)
+            m = verb_re.search(clean)
+            if m:
+                result.append(m.group(1))
     return result
 
 
 def _extract_ambiguous_terms() -> tuple[dict, List[str]]:
     """
-    Extract ambiguous term categories from RULE-C02 check steps.
-    Each relevant line has the form:
-      [category_name / SEVERITY] term1, term2, … — note
+    Extract ambiguous term categories from the completeness ruleset.
+    Matches check lines: 'Detect vague <category> terms such as term1, term2, …'
+    No hardcoded rule IDs.
     """
-    by_cat: dict     = {}
-    flat: List[str]  = []
+    by_cat: dict    = {}
+    flat: List[str] = []
+    detect_re = re.compile(
+        r"Detect\s+(?:vague\s+)?(.+?)\s+terms?\s+such\s+as\s+(.+)$",
+        re.IGNORECASE,
+    )
     for rule in get_rules("completeness"):
-        if rule.get("rule_id") == "RULE-C02":
-            for chk in rule.get("checks", []):
-                m = re.match(
-                    r"^\[([^/\]]+)\s*/\s*(\w+)\]\s+(.+?)\s+—\s+(.+)$", chk
-                )
-                if not m:
-                    continue
-                cat_name = m.group(1).strip().replace(" ", "_")
-                severity = m.group(2).strip()
-                terms    = [t.strip() for t in m.group(3).split(",") if t.strip()]
-                note     = m.group(4).strip()
-                by_cat[cat_name] = {"severity": severity, "note": note, "terms": terms}
-                flat.extend(terms)
-            break
+        severity = rule.get("failure_severity", "HIGH")
+        for chk in rule.get("checks", []):
+            clean = _strip_prefix(chk)
+            m = detect_re.match(clean)
+            if not m:
+                continue
+            cat_name = m.group(1).strip().replace(" ", "_")
+            terms    = [t.strip() for t in m.group(2).split(",") if t.strip()]
+            by_cat[cat_name] = {
+                "severity": severity,
+                "note": f"Replace '{cat_name.replace('_',' ')}' terms with measurable values",
+                "terms": terms,
+            }
+            flat.extend(terms)
     return by_cat, flat
 
 
 def _extract_forbidden_patterns() -> List[dict]:
     """
-    Forbidden patterns come from two sources:
-      • RULE-W01/W02: TBD, TBC — extracted from first check step
-      • RULE-M07 [open_ended_lists]: etc., etc, including but not limited to,
-        and/or — extracted from the tagged check step
+    Forbidden patterns from wording rules ('Detect the literal string X')
+    and morphology rules ('[open_ended_lists] Detect …').
+    No hardcoded rule IDs.
     """
-    result = []
+    result       = []
+    literal_re   = re.compile(r"Detect\s+the\s+literal\s+string\s+'([^']+)'", re.IGNORECASE)
 
-    # TBD / TBC
     for rule in get_rules("wording"):
-        checks = rule.get("checks", [])
-        pm = re.search(r"'([^']+)'", checks[0]) if checks else None
-        if pm:
-            result.append({
-                "pattern":  pm.group(1),
-                "severity": rule.get("failure_severity", "BLOCKING"),
-                "note":     checks[1] if len(checks) > 1 else "",
-            })
+        severity = rule.get("failure_severity", "BLOCKING")
+        for chk in rule.get("checks", []):
+            clean = _strip_prefix(chk)
+            m = literal_re.search(clean)
+            if m:
+                result.append({
+                    "pattern":  m.group(1),
+                    "severity": severity,
+                    "note":     f"{rule['rule_id']} — {rule.get('title','')}",
+                })
 
-    # open_ended_lists patterns from RULE-M07
     for rule in get_rules("morphology"):
-        if rule.get("rule_id") == "RULE-M07":
-            for chk in rule.get("checks", []):
-                if "[open_ended_lists]" not in chk:
-                    continue
-                # Extract all single-quoted tokens
-                patterns = re.findall(r"'([^']+)'", chk)
-                note_part = chk.split("—")[-1].strip() if "—" in chk else chk
-                for pat in patterns:
-                    result.append({
-                        "pattern":  pat,
-                        "severity": rule.get("failure_severity", "HIGH"),
-                        "note":     note_part,
-                    })
-            break
+        severity = rule.get("failure_severity", "HIGH")
+        for chk in rule.get("checks", []):
+            clean = _strip_prefix(chk)
+            if "open_ended_lists" not in clean.lower():
+                continue
+            # detect part after "Detect": extract quoted tokens
+            detect_part = re.sub(r".*Detect\s+", "", clean, flags=re.IGNORECASE)
+            for pat in re.findall(r"'([^']+)'", detect_part):
+                result.append({
+                    "pattern":  pat,
+                    "severity": severity,
+                    "note":     f"{rule['rule_id']} — open-ended list marker",
+                })
 
     return result
 
 
 def _extract_sentence_morphology() -> dict:
     """
-    Build {category_name: {severity, issues: {tag: description}}} from
-    morphology rules RULE-M01..RULE-M07 (not M08 which is sentence length).
-    Each check step starting with [tag] contributes one issue entry.
+    Build {rule_title_snake: {severity, issues: {semantic_tag: description}}}
+    from the morphology ruleset. Secondary [semantic_tag] tokens in check text
+    (after the sub-check ID prefix is stripped) are extracted as issue keys.
+    No hardcoded rule IDs.
     """
     result  = {}
-    tag_re  = re.compile(r"^\[([^\]]+)\]\s+(.+)$")
+    tag_re  = re.compile(r"^\[([a-z_]+)\]\s+(.+)$")
     for rule in get_rules("morphology"):
-        rid = rule.get("rule_id", "")
-        if rid == "RULE-M08":
-            continue
-        cat_name = rule.get("title", rid).lower().replace(" ", "_")
+        cat_name = rule.get("title", rule["rule_id"]).lower().replace(" ", "_")
         severity = rule.get("failure_severity", "MEDIUM")
         issues   = {}
         for chk in rule.get("checks", []):
-            m = tag_re.match(chk.strip())
+            clean = _strip_prefix(chk)
+            m = tag_re.match(clean)
             if m:
                 issues[m.group(1)] = m.group(2)
         if issues:
@@ -228,41 +384,30 @@ def _extract_sentence_morphology() -> dict:
 
 def _extract_structural_rules() -> List[dict]:
     """
-    Expose RULE-M08 (sentence length) in the legacy STRUCTURAL_RULES shape
-    for backward-compatible callers.
+    Morphology rules with word-count thresholds, in legacy STRUCTURAL_RULES shape.
+    Detected by presence of a number followed by 'word(s)' in any check.
+    No hardcoded rule IDs.
     """
-    result = []
+    result   = []
+    count_re = re.compile(r"(\d+)\s+words?", re.IGNORECASE)
     for rule in get_rules("morphology"):
-        if rule.get("rule_id") == "RULE-M08":
-            checks = rule.get("checks", [])
-            result.append({
-                "rule_id":    rule["rule_id"],
-                "title":      rule.get("title", ""),
-                "check":      checks[0] if checks else "",
-                "severity":   rule.get("failure_severity", "MEDIUM"),
-                "note":       rule.get("objective", ""),
-                "threshold":  30,
-                "comparison": "gt",
-            })
+        for chk in rule.get("checks", []):
+            m = count_re.search(chk)
+            if m:
+                result.append({
+                    "rule_id":    rule["rule_id"],
+                    "title":      rule.get("title", ""),
+                    "check":      chk,
+                    "severity":   rule.get("failure_severity", "MEDIUM"),
+                    "note":       rule.get("objective", ""),
+                    "threshold":  int(m.group(1)),
+                    "comparison": "gt",
+                })
+                break
     return result
 
 
-# ── EARS patterns ─────────────────────────────────────────────────────────────
-
-_EARS_SECTION  = _RAW.get("ears_patterns", {})
-EARS_PATTERNS: List[dict] = _EARS_SECTION.get("patterns", [])
-
-# ── DAL levels ────────────────────────────────────────────────────────────────
-
-DAL_LEVELS = {
-    "A": "Catastrophic — Loss of aircraft or multiple fatalities",
-    "B": "Hazardous — Large reduction in safety margins, crew distress",
-    "C": "Major — Significant reduction in safety margins",
-    "D": "Minor — Slight reduction in safety margins",
-    "E": "No safety effect",
-}
-
-# ── Derived constants (populated after all helpers are defined) ───────────────
+# ── Populate derived constants ────────────────────────────────────────────────
 
 WEAK_MODAL_VERBS:      List[str]  = _extract_weak_modals()
 AMBIGUOUS_TERMS_BY_CAT, AMBIGUOUS_TERMS = _extract_ambiguous_terms()
@@ -271,77 +416,62 @@ SENTENCE_MORPHOLOGY:   dict       = _extract_sentence_morphology()
 STRUCTURAL_RULES:      List[dict] = _extract_structural_rules()
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# Prompt formatters
-# ═════════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
+# Wording + EARS formatters
+# ─────────────────────────────────────────────────────────────────────────────
 
 def format_wording_for_prompt() -> str:
-    """
-    Full wording & morphology block for injection into agent prompts.
-    Sections: weak modals, ambiguous terms, forbidden patterns,
-    morphology rules, sentence length.
-    """
+    """Full wording & morphology reference block. Generated from rules.json."""
+    modal = _RAW.get("mandatory_modal_verb", {})
     lines = [
         f"WORDING & MORPHOLOGY RULES (rules.json v{VERSION})",
-        "═" * 65,
-        f'MANDATORY MODAL VERB: "{MANDATORY_MODAL_VERB}" — all binding obligations.',
+        "=" * 65,
+        f'MANDATORY MODAL VERB: "{MANDATORY_MODAL_VERB}" — {modal.get("note", "")}',
         "",
     ]
 
-    # ── Weak modals (RULE-R03) ────────────────────────────────────────────
-    lines.append("WEAK MODAL VERBS (RULE-R03) — replace with 'shall' for binding obligations:")
-    for rule in get_rules("correctness"):
-        if rule["rule_id"] == "RULE-R03":
+    wording_rs = get_ruleset("wording")
+    if wording_rs:
+        lines.append(f"WORDING RULES ({wording_rs.get('origin','')}):")
+        for rule in get_rules("wording"):
+            rid   = rule["rule_id"]
+            sev   = rule["failure_severity"]
+            title = rule.get("title", "")
+            lines.append(f"  +- {rid} [{sev}] {title}")
             for chk in rule.get("checks", []):
-                if re.match(r"^\s{2,6}\S", chk):
-                    lines.append(f"  •{chk}")
-            break
-    lines.append("")
+                lines.append(f"  |  {chk}")
+            lines.append("  " + "-" * 50)
+        lines.append("")
 
-    # ── Ambiguous terms (RULE-C02) ────────────────────────────────────────
-    lines.append("AMBIGUOUS / UNVERIFIABLE TERMS (RULE-C02) — flag with category and remediation:")
-    for cat_name, cat in AMBIGUOUS_TERMS_BY_CAT.items():
-        terms = ", ".join(cat.get("terms", []))
-        lines.append(f"  [{cat_name} / {cat['severity']}]  {terms}")
-        lines.append(f"    → {cat['note']}")
-    lines.append("")
+    if AMBIGUOUS_TERMS_BY_CAT:
+        lines.append("AMBIGUOUS / UNVERIFIABLE TERMS — replace with measurable criteria:")
+        for cat_name, cat in AMBIGUOUS_TERMS_BY_CAT.items():
+            terms = ", ".join(cat.get("terms", []))
+            lines.append(f"  [{cat_name} / {cat['severity']}]  {terms}")
+        lines.append("")
 
-    # ── Forbidden patterns (RULE-W01/W02, RULE-M07) ───────────────────────
-    lines.append("FORBIDDEN PATTERNS (RULE-W01/W02, RULE-M07) — always flag, unconditionally:")
-    for p in FORBIDDEN_PATTERNS:
-        lines.append(f"  • '{p['pattern']}' [{p['severity']}]  {p.get('note', '')}")
-    lines.append("")
-
-    # ── Morphology (RULE-M01..M07) ────────────────────────────────────────
-    lines.append("SENTENCE MORPHOLOGY BAD PRACTICES (RULE-M01..M07):")
-    for rule in get_rules("morphology"):
-        if rule["rule_id"] == "RULE-M08":
-            continue
-        rid = rule["rule_id"]
-        sev = rule.get("failure_severity", "MEDIUM")
-        lines.append(f"  [{rid} — {rule['title']}] [{sev}]")
-        for chk in rule.get("checks", []):
-            lines.append(f"    • {chk}")
-    lines.append("")
-
-    # ── Sentence length (RULE-M08) ────────────────────────────────────────
-    for rule in get_rules("morphology"):
-        if rule["rule_id"] == "RULE-M08":
-            sev = rule.get("failure_severity", "MEDIUM")
-            lines.append(f"SENTENCE LENGTH (RULE-M08) [{sev}]:")
+    morph_rs = get_ruleset("morphology")
+    if morph_rs:
+        lines.append(f"MORPHOLOGY RULES ({morph_rs.get('origin','')}):")
+        for rule in get_rules("morphology"):
+            rid   = rule["rule_id"]
+            sev   = rule["failure_severity"]
+            title = rule.get("title", "")
+            lines.append(f"  +- {rid} [{sev}] {title}")
             for chk in rule.get("checks", []):
-                lines.append(f"  • {chk}")
-            break
+                lines.append(f"  |  {chk}")
+            lines.append("  " + "-" * 50)
+        lines.append("")
 
     return "\n".join(lines)
 
 
 def format_ears_for_prompt() -> str:
-    """EARS patterns block for injection into the recommender agent prompt."""
+    """EARS patterns block for the recommender agent prompt."""
     ref = _EARS_SECTION.get("reference", "")
     lines = [
         "EARS PATTERNS — Easy Approach to Requirements Syntax",
-        "═" * 65,
+        "=" * 65,
         f"Reference: {ref}",
         "",
         "INSTRUCTION: Choose the MOST APPROPRIATE EARS pattern for every rewrite.",
@@ -352,10 +482,10 @@ def format_ears_for_prompt() -> str:
     for p in EARS_PATTERNS:
         kw = p.get("keyword") or "—"
         lines += [
-            f"┌─ {p['name']}  (keyword: {kw})",
-            f"│  Template : {p['template']}",
-            f"│  Use when : {p['use_when']}",
-            f"│  Example  : {p['example']}",
-            "└" + "─" * 65,
+            f"+- {p['name']}  (keyword: {kw})",
+            f"|  Template : {p['template']}",
+            f"|  Use when : {p['use_when']}",
+            f"|  Example  : {p['example']}",
+            "-" * 65,
         ]
     return "\n".join(lines)

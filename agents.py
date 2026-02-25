@@ -24,8 +24,15 @@ from langgraph.graph.message import add_messages
 
 from arp4754_rules import (
     format_rules_for_prompt,
+    format_all_rules_for_prompt,
     format_wording_for_prompt,
     format_ears_for_prompt,
+    format_output_format,
+    format_consistency_output_format,
+    format_instructions,
+    format_consistency_instructions,
+    format_wording_output_format,
+    format_wording_instructions,
     get_rules,
     blocking_rules,
     AMBIGUOUS_TERMS,
@@ -38,6 +45,7 @@ from arp4754_rules import (
     DAL_LEVELS,
     STANDARD,
     VERSION,
+    RULESETS,
 )
 from rag import get_rag, RAGEngine
 from multi_req_agents import run_multi_req_pipeline
@@ -458,6 +466,10 @@ def _run_per_req(
 def completeness_agent(state: ValidationState) -> ValidationState:
     """ARP4754A §5.3 — Completeness. One LLM call per requirement."""
     rules_text = format_rules_for_prompt("completeness")
+    wording    = format_wording_for_prompt()
+
+    output_fmt   = format_output_format("completeness")
+    instructions = format_instructions("completeness")
 
     def sys_fn(req, rag_ctx):
         if len(rag_ctx) < 10:   # called as query-hint pass
@@ -472,21 +484,15 @@ def completeness_agent(state: ValidationState) -> ValidationState:
 COMPLETENESS RULES (from rules.json):
 {rules_text}
 
+{wording}
 {rag_ctx}
 {_sys_ctx(state)}
 
 INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
-1. Work through each rule's CHECK STEPS explicitly.
-2. For each check step: state PASSES (✓) or FAILS (✗) and why.
-3. For FAILS: quote the exact problematic text and state the failure_severity.
+{instructions}
 
-OUTPUT FORMAT:
-─────────────────────────────────────────────────
-[REQ-ID]: [first 60 chars of requirement text...]
-─────────────────────────────────────────────────
-  REQ-XXX [SEVERITY] ✓/✗  — [explanation]
-
-─────────────────────────────────────────────────"""
+OUTPUT FORMAT (use exactly):
+{output_fmt}"""
 
     def human_fn(req, rag_ctx):
         return f"Perform completeness analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
@@ -523,29 +529,10 @@ DAL LEVEL DEFINITIONS:
 {_sys_ctx(state)}
 
 INSTRUCTIONS — analyse the FULL SET of requirements together:
-1. REQ-K01: pairwise contradiction analysis — cite both req IDs.
-2. REQ-K02: extract key terms; flag inconsistent usage across requirements.
-3. REQ-K03: extract all physical quantities; verify unit and tolerance consistency.
-4. REQ-K04: compare every DAL assignment against stated failure conditions.
-5. REQ-K05/K06: identify timing and performance conflicts.
-6. State PASSES (✓) or FAILS (✗) with failure_severity per check.
+{format_consistency_instructions()}
 
-OUTPUT FORMAT:
-─────────────────────────────────────────────────
-REQ-K01 [SEVERITY] — Contradiction Analysis
-  [pair analysis or "No contradictions found"]
-REQ-K02 [SEVERITY] — Terminology Consistency
-  [findings]
-REQ-K03 [SEVERITY] — Units and Tolerances
-  [findings]
-REQ-K04 [SEVERITY] — DAL Consistency
-  [findings]
-REQ-K05 [SEVERITY] — Performance Feasibility
-  [findings]
-REQ-K06 [SEVERITY] — Timing Consistency
-  [findings]
-─────────────────────────────────────────────────
-SUMMARY: [2-3 sentence paragraph]"""
+OUTPUT FORMAT (use exactly):
+{format_consistency_output_format()}"""
 
     req_text = json.dumps(state["requirements"], indent=2)
     _emit("req_progress", current=0, total=len(state["requirements"]), label="Consistency §5.4")
@@ -589,26 +576,10 @@ VERIFICATION METHODS defined in {STANDARD}:
 {_sys_ctx(state)}
 
 INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
-1. REQ-V01: state Yes / Partially / No for verifiability and why.
-2. REQ-V02: identify numeric thresholds present; flag vague performance statements.
-3. REQ-V03: list any subjective terms; confirm measurable criteria exist.
-4. REQ-V04: assign the most appropriate method(s): T / A / I / D.
-5. REQ-V05: assess feasibility; flag any unrealistic verification demands.
-6. REQ-V06: detect impossible states or undefined references.
-7. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
-8. Give a per-requirement verifiability score (0–100).
+{format_instructions("verifiability")}
 
-OUTPUT FORMAT:
-─────────────────────────────────────────────────
-[REQ-ID]: [first 60 chars...]
-─────────────────────────────────────────────────
-  REQ-V01 [SEVERITY] ✓/✗  — [verifiable? explanation]
-  REQ-V02 [SEVERITY] ✓/✗  — [threshold analysis]
-  REQ-V03 [SEVERITY] ✓/✗  — [subjective terms found or none]
-  REQ-V04 [SEVERITY] ✓/✗  — [recommended method: T/A/I/D]
-  REQ-V05 [SEVERITY] ✓/✗  — [feasibility assessment]
-  REQ-V06 [SEVERITY] ✓/✗  — [impossible conditions check]
-─────────────────────────────────────────────────"""
+OUTPUT FORMAT (use exactly):
+{format_output_format("verifiability")}"""
 
     def human_fn(req, rag_ctx):
         return f"Perform verifiability analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
@@ -644,25 +615,12 @@ TRACEABILITY HIERARCHY:
 {_sys_ctx(state)}
 
 INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
-1. REQ-T01: identify whether an upstream source is stated in the text.
-2. REQ-T02: for derived requirements, verify a justification link exists.
-3. REQ-T03: assess whether downward traceability to design artifacts is implied.
-4. REQ-T04: determine whether HW or SW allocation is specified or inferable.
-5. REQ-T05: for safety requirements, verify a FHA failure condition is referenced.
-6. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
+{format_instructions("traceability")}
 
 Note: assess only what is PRESENT IN THE TEXT.
 
-OUTPUT FORMAT:
-─────────────────────────────────────────────────
-[REQ-ID]: [first 60 chars...]
-─────────────────────────────────────────────────
-  REQ-T01 [SEVERITY] ✓/✗  — [upstream source found / missing]
-  REQ-T02 [SEVERITY] ✓/✗  — [derivation justification]
-  REQ-T03 [SEVERITY] ✓/✗  — [downward trace]
-  REQ-T04 [SEVERITY] ✓/✗  — [HW/SW allocation]
-  REQ-T05 [SEVERITY] ✓/✗  — [FHA failure condition reference]
-─────────────────────────────────────────────────"""
+OUTPUT FORMAT (use exactly):
+{format_output_format("traceability")}"""
 
     def human_fn(req, rag_ctx):
         return f"Perform traceability analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
@@ -693,16 +651,11 @@ CORRECTNESS RULES (from rules.json):
 {rag_ctx}
 {_sys_ctx(state)}
 
-INSTRUCTIONS — Verify the satisfaction of each of the previous rules 
-1. Check each rule. The rule passes if all checks pass/
-2. State PASSES (✓) or FAILS (✗) with failure_severity per rule.
+INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT only:
+{format_instructions("correctness")}
 
-OUTPUT FORMAT:
-─────────────────────────────────────────────────
-[REQ-ID]: [first 60 chars...]
-─────────────────────────────────────────────────
-  REQ-XXX [SEVERITY] ✓/✗  — [explanation]
-─────────────────────────────────────────────────"""
+OUTPUT FORMAT (use exactly):
+{format_output_format("correctness")}"""
 
     def human_fn(req, rag_ctx):
         return f"Perform correctness analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
@@ -717,15 +670,14 @@ OUTPUT FORMAT:
 def wording_agent(state: ValidationState) -> ValidationState:
     """
     Dedicated wording and sentence morphology agent.
-    Checks all rules from wording_rules.json per requirement:
-      • Ambiguous / unverifiable terms (all 11 categories)
-      • Weak modal verbs
-      • Forbidden patterns
-      • Sentence morphology bad practices (all 7 categories)
-      • Structural rules WORD-S01 through WORD-S06
+    Checks all wording and morphology rules from rules.json per requirement.
     One LLM call per requirement.
+    Generated instructions and output format are derived entirely from rules.json.
     """
     wording_ref = format_wording_for_prompt()
+
+    wording_instructions = format_wording_instructions()
+    wording_output_fmt   = format_wording_output_format()
 
     def sys_fn(req, rag_ctx):
         if len(rag_ctx) < 10:
@@ -737,42 +689,11 @@ def wording_agent(state: ValidationState) -> ValidationState:
 {wording_ref}
 {rag_ctx}
 
-INSTRUCTIONS — Analyse THIS SINGLE REQUIREMENT for wording and morphology only.
-Work through EVERY category given before.
+INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT for wording and morphology only.
+{wording_instructions}
 
 OUTPUT FORMAT — use EXACTLY this structure:
-─────────────────────────────────────────────────
-[REQ-ID]: [first 60 chars of text...]
-─────────────────────────────────────────────────
-WEAK MODALS:
-  REQ-R03 [LOW] ✓/✗  — [terms found, or "none"]
-
-AMBIGUOUS TERMS:
-  REQ-C02 [HIGH] ✓/✗  — [term "X" [category]: description, or "none"]
-  (one line per term found; ✓ if none in category)
-
-FORBIDDEN PATTERNS:
-  [pattern] [SEVERITY] ✓/✗  — [occurrence quoted, or "none"]
-
-MORPHOLOGY:
-  negation_issues           [SEVERITY] ✓/✗  — [finding or "none"]
-  structural_complexity     [SEVERITY] ✓/✗  — [finding or "none"]
-  ambiguity_prone_structures [SEVERITY] ✓/✗  — [finding or "none"]
-  passive_voice             [SEVERITY] ✓/✗  — [finding or "none"]
-  modality_issues           [SEVERITY] ✓/✗  — [finding or "none"]
-  logical_issues            [SEVERITY] ✓/✗  — [finding or "none"]
-  vagueness_in_structure    [SEVERITY] ✓/✗  — [finding or "none"]
-
-STRUCTURAL:
-  WORD-S01 [SEVERITY] ✓/✗  — [finding or "pass"]
-  WORD-S02 [SEVERITY] ✓/✗  — [finding or "pass"]
-  WORD-S03 [SEVERITY] ✓/✗  — [finding or "pass"]
-  WORD-S04 [SEVERITY] ✓/✗  — [finding or "pass"]
-  WORD-S05 [SEVERITY] ✓/✗  — [finding or "pass"]
-  WORD-S06 [SEVERITY] ✓/✗  — [finding or "pass"]
-
-WORDING SCORE: XX/100
-─────────────────────────────────────────────────"""
+{wording_output_fmt}"""
 
     def human_fn(req, rag_ctx):
         return (
@@ -799,10 +720,10 @@ def recommender_agent(state: ValidationState) -> ValidationState:
     llm = get_llm(temperature=0.15)
     rag = get_rag()
 
-    # Build compact rule reference
+    # Build compact rule reference from ALL categories in rules.json (no hardcoded list)
     all_rules_summary = []
-    for cat in ("correctness", "completeness", "consistency", "verifiability", "traceability"):
-        for rule in get_rules(cat):
+    for rs in RULESETS:
+        for rule in rs.get("rules", []):
             rid      = rule["rule_id"]
             title    = rule["title"]
             severity = rule["failure_severity"]
@@ -856,7 +777,7 @@ ORIGINAL:
 EARS PATTERN SELECTED: [pattern name] — [one-sentence justification]
 
 VIOLATIONS ADDRESSED:
-  • [rule_id / WORD-Sxx / morphology_category] [SEVERITY] — [violation description]
+  • [rule_id / morphology_category] [SEVERITY] — [violation description]
 
 CORRECTED REWRITE:
   [ID][-A/-B/…]: [EARS-structured statement] [Verification: T/A/I/D]
