@@ -166,29 +166,16 @@ def format_output_format(category: str) -> str:
     return "\n".join(lines)
 
 
-def format_consistency_output_format() -> str:
-    """Output format block for the bulk consistency agent."""
-    rules = get_rules("consistency")
-    lines = ["─" * 49]
-    for rule in rules:
-        rid   = rule["rule_id"]
-        sev   = rule["failure_severity"]
-        title = rule.get("title", "")
-        lines.append(f"{rid} [{sev}] \u2014 {title}")
-        lines.append("  [findings, or \"pass\"]")
-    lines += [
-        "─" * 49,
-        "OVERALL CONSISTENCY SCORE: XX/100",
-        "SUMMARY: [2-3 sentence paragraph]",
-    ]
-    return "\n".join(lines)
-
-
 def format_instructions(category: str) -> str:
     """
     Numbered instruction list for a per-requirement agent.
     Generated from rules.json — each rule becomes one step.
     """
+    lines = [
+        "Work through EVERY rule below in order.",
+        "For each check step: state PASSES (\u2713) or FAILS (\u2717) and quote the offending text.",
+        "",
+    ]    
     rules = get_rules(category)
     lines = []
     for i, rule in enumerate(rules, 1):
@@ -200,69 +187,6 @@ def format_instructions(category: str) -> str:
     n = len(rules)
     lines.append(f"{n+1}. State PASSES (\u2713) or FAILS (\u2717) with failure_severity per rule.")
     lines.append(f"{n+2}. Give a per-requirement {category} score (0\u2013100).")
-    return "\n".join(lines)
-
-
-def format_consistency_instructions() -> str:
-    """Numbered instruction list for the bulk consistency agent."""
-    rules = get_rules("consistency")
-    lines = []
-    for i, rule in enumerate(rules, 1):
-        rid    = rule["rule_id"]
-        title  = rule.get("title", "")
-        checks = rule.get("checks", [])
-        summary = "; ".join(_strip_prefix(c) for c in checks)
-        lines.append(f"{i}. {rid} ({title}): {summary}")
-    n = len(rules)
-    lines.append(f"{n+1}. State PASSES (\u2713) or FAILS (\u2717) with failure_severity per check.")
-    return "\n".join(lines)
-
-
-def format_wording_output_format() -> str:
-    """Output format for the wording/morphology agent. Generated from rules.json."""
-    lines = [
-        "─" * 49,
-        "[REQ-ID]: [first 60 chars of text...]",
-        "─" * 49,
-    ]
-    wording_rules = get_rules("wording")
-    if wording_rules:
-        lines.append("WORDING:")
-        for rule in wording_rules:
-            rid   = rule["rule_id"]
-            sev   = rule["failure_severity"]
-            title = rule.get("title", "")
-            lines.append(f"  {rid} [{sev}] \u2713/\u2717  \u2014 [{title}]")
-    morph_rules = get_rules("morphology")
-    if morph_rules:
-        lines.append("")
-        lines.append("MORPHOLOGY:")
-        for rule in morph_rules:
-            rid   = rule["rule_id"]
-            sev   = rule["failure_severity"]
-            title = rule.get("title", "")
-            lines.append(f"  {rid} [{sev}] \u2713/\u2717  \u2014 [{title}]")
-    lines += ["", "WORDING SCORE: XX/100", "─" * 49]
-    return "\n".join(lines)
-
-
-def format_wording_instructions() -> str:
-    """Instruction list for the wording/morphology agent. Generated from rules.json."""
-    lines = [
-        "Work through EVERY rule below in order.",
-        "For each check step: state PASSES (\u2713) or FAILS (\u2717) and quote the offending text.",
-        "",
-    ]
-    step = 1
-    for category in ("wording", "morphology"):
-        for rule in get_rules(category):
-            rid    = rule["rule_id"]
-            title  = rule.get("title", "")
-            lines.append(f"STEP {step} \u2014 {rid}: {title}")
-            for chk in rule.get("checks", []):
-                lines.append(f"  \u2022 {_strip_prefix(chk)}")
-            lines.append("")
-            step += 1
     return "\n".join(lines)
 
 
@@ -419,52 +343,6 @@ STRUCTURAL_RULES:      List[dict] = _extract_structural_rules()
 # ─────────────────────────────────────────────────────────────────────────────
 # Wording + EARS formatters
 # ─────────────────────────────────────────────────────────────────────────────
-
-def format_wording_for_prompt() -> str:
-    """Full wording & morphology reference block. Generated from rules.json."""
-    modal = _RAW.get("mandatory_modal_verb", {})
-    lines = [
-        f"WORDING & MORPHOLOGY RULES (rules.json v{VERSION})",
-        "=" * 65,
-        f'MANDATORY MODAL VERB: "{MANDATORY_MODAL_VERB}" — {modal.get("note", "")}',
-        "",
-    ]
-
-    wording_rs = get_ruleset("wording")
-    if wording_rs:
-        lines.append(f"WORDING RULES ({wording_rs.get('origin','')}):")
-        for rule in get_rules("wording"):
-            rid   = rule["rule_id"]
-            sev   = rule["failure_severity"]
-            title = rule.get("title", "")
-            lines.append(f"  +- {rid} [{sev}] {title}")
-            for chk in rule.get("checks", []):
-                lines.append(f"  |  {chk}")
-            lines.append("  " + "-" * 50)
-        lines.append("")
-
-    if AMBIGUOUS_TERMS_BY_CAT:
-        lines.append("AMBIGUOUS / UNVERIFIABLE TERMS — replace with measurable criteria:")
-        for cat_name, cat in AMBIGUOUS_TERMS_BY_CAT.items():
-            terms = ", ".join(cat.get("terms", []))
-            lines.append(f"  [{cat_name} / {cat['severity']}]  {terms}")
-        lines.append("")
-
-    morph_rs = get_ruleset("morphology")
-    if morph_rs:
-        lines.append(f"MORPHOLOGY RULES ({morph_rs.get('origin','')}):")
-        for rule in get_rules("morphology"):
-            rid   = rule["rule_id"]
-            sev   = rule["failure_severity"]
-            title = rule.get("title", "")
-            lines.append(f"  +- {rid} [{sev}] {title}")
-            for chk in rule.get("checks", []):
-                lines.append(f"  |  {chk}")
-            lines.append("  " + "-" * 50)
-        lines.append("")
-
-    return "\n".join(lines)
-
 
 def format_ears_for_prompt() -> str:
     """EARS patterns block for the recommender agent prompt."""

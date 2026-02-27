@@ -66,27 +66,7 @@
           "objective": "Ensure each requirement is uniquely identifiable",
           "checks": [
             "[RULE-C01.a] Verify the requirement has an identifier",
-            "[RULE-C01.b] Verify the identifier is unique across the requirement set",
-            "[RULE-C01.c] Verify the identifier adheres to the project naming convention"
-          ],
-          "failure_severity": "HIGH"
-        },
-        {
-          "rule_id": "RULE-C02",
-          "title": "Unambiguous requirement wording",
-          "objective": "Eliminate ambiguity — every term must be defined or measurable",
-          "checks": [
-            "[RULE-C02.a] Detect vague performance terms such as fast, slow, quickly, soon, rapidly, timely",
-            "[RULE-C02.b] Detect vague quantitative terms such as approximately, about, around, roughly",
-            "[RULE-C02.c] Detect vague quantification terms such as adequate, sufficient, appropriate, suitable, negligible",
-            "[RULE-C02.d] Detect vague conditional applicability terms such as as required, if applicable, where necessary, when needed",
-            "[RULE-C02.e] Detect subjective quality judgment terms such as good, bad, better, best, optimal, acceptable, reasonable",
-            "[RULE-C02.f] Detect vague performance attribute terms such as reliable, robust, flexible, efficient",
-            "[RULE-C02.g] Detect vague usability attribute terms such as user-friendly, intuitive, easy, simple",
-            "[RULE-C02.h] Detect vague optimization terms such as minimize, maximize",
-            "[RULE-C02.i] Detect vague state classification terms such as normal, abnormal",
-            "[RULE-C02.j] Detect vague scale reference terms such as high, low, large, small",
-            "[RULE-C02.k] Detect vague technology reference terms such as state-of-the-art"
+            "[RULE-C01.b] Verify the identifier adheres to the project naming convention"
           ],
           "failure_severity": "HIGH"
         },
@@ -243,6 +223,12 @@
           ],
           "failure_severity": "HIGH"
         }
+
+
+
+
+
+        
       ]
     },
     {
@@ -390,26 +376,6 @@
           "failure_severity": "MEDIUM"
         },
         {
-          "rule_id": "RULE-R03",
-          "title": "Correct modal verb — 'shall' mandatory",
-          "objective": "Ensure 'shall' is the sole modal for all binding obligations",
-          "checks": [
-            "[RULE-R03.a] Verify 'shall' is used for every binding obligation",
-            "[RULE-R03.b] Detect weak or non-standard modals that may appear in binding obligations",
-            "[RULE-R03.c] Detect weak modal 'should'",
-            "[RULE-R03.d] Detect weak modal 'may'",
-            "[RULE-R03.e] Detect weak modal 'might'",
-            "[RULE-R03.f] Detect weak modal 'could'",
-            "[RULE-R03.g] Detect weak modal 'would'",
-            "[RULE-R03.h] Detect capability modal 'can'",
-            "[RULE-R03.i] Detect non-standard modal 'must'",
-            "[RULE-R03.j] Detect intent modal 'will'",
-            "[RULE-R03.k] Detect passive paraphrase 'is required to'",
-            "[RULE-R03.l] Detect weak phrase 'should be able to'"
-          ],
-          "failure_severity": "LOW"
-        },
-        {
           "rule_id": "RULE-R04",
           "title": "Single obligation per statement",
           "objective": "Avoid compound requirements — one 'shall' per statement",
@@ -446,6 +412,41 @@
       "origin": "ARP4754A writing conventions",
       "description": "Lexical wording rules — markers that unconditionally invalidate a requirement",
       "rules": [
+       {
+          "rule_id": "RULE-W00",
+          "title": "Unambiguous requirement wording",
+          "objective": "Eliminate ambiguity — every term must be defined or measurable",
+          "checks": [
+            "[RULE-C02.a] Detect vague performance terms such as fast, slow, quickly, soon, rapidly, timely",
+            "[RULE-C02.b] Detect vague quantitative terms such as approximately, about, around, roughly",
+            "[RULE-C02.c] Detect vague quantification terms such as adequate, sufficient, appropriate, suitable, negligible",
+            "[RULE-C02.d] Detect vague conditional applicability terms such as as required, if applicable, where necessary, when needed",
+            "[RULE-C02.e] Detect subjective quality judgment terms such as good, bad, better, best, optimal, acceptable, reasonable",
+            "[RULE-C02.f] Detect vague performance attribute terms such as reliable, robust, flexible, efficient",
+            "[RULE-C02.g] Detect vague usability attribute terms such as user-friendly, intuitive, easy, simple",
+            "[RULE-C02.h] Detect vague optimization terms such as minimize, maximize",
+            "[RULE-C02.i] Detect vague state classification terms such as normal, abnormal",
+            "[RULE-C02.j] Detect vague scale reference terms such as high, low, large, small",
+            "[RULE-C02.k] Detect reference to implementation solution"
+          ],
+          "failure_severity": "HIGH"
+        },
+        {
+          "rule_id": "RULE-R03",
+          "title": "Correct modal verb — 'shall' mandatory",
+          "objective": "Ensure 'shall' is the sole modal for all binding obligations",
+          "checks": [
+            "[RULE-R03.a] Verify 'shall' is used for every binding obligation",
+            "[RULE-R03.b] Detect weak or non-standard modals that may appear in binding obligations",
+            "[RULE-R03.c] Detect weak modal 'should', 'may', 'might', 'could', 'would',
+            "[RULE-R03.d] Detect capability modal 'can'",
+            "[RULE-R03.e] Detect non-standard modal 'must'",
+            "[RULE-R03.f] Detect intent modal 'will'",
+            "[RULE-R03.g] Detect passive paraphrase 'is required to'",
+            "[RULE-R03.h] Detect weak phrase 'should be able to'"
+          ],
+          "failure_severity": "LOW"
+        },                
         {
           "rule_id": "RULE-W01",
           "title": "No TBD placeholders",

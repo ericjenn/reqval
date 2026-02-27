@@ -24,7 +24,6 @@ from langgraph.graph.message import add_messages
 
 from arp4754_rules import (
     format_rules_for_prompt,
-    format_all_rules_for_prompt,
     format_wording_for_prompt,
     format_ears_for_prompt,
     format_output_format,
@@ -33,15 +32,7 @@ from arp4754_rules import (
     format_consistency_instructions,
     format_wording_output_format,
     format_wording_instructions,
-    get_rules,
     blocking_rules,
-    AMBIGUOUS_TERMS,
-    AMBIGUOUS_TERMS_BY_CAT,
-    WEAK_MODAL_VERBS,
-    FORBIDDEN_PATTERNS,
-    SENTENCE_MORPHOLOGY,
-    MANDATORY_MODAL_VERB,
-    EARS_PATTERNS,
     DAL_LEVELS,
     STANDARD,
     VERSION,
@@ -65,7 +56,6 @@ class ValidationState(TypedDict):
     input_metadata:           Annotated[dict, lambda old, new: new]  # project/version/purpose from JSON header
     system_context:           str
     completeness_findings:    str
-    consistency_findings:     str
     verifiability_findings:   str
     traceability_findings:    str
     correctness_findings:     str
@@ -75,7 +65,7 @@ class ValidationState(TypedDict):
     # ── Multi-requirement pipeline fields ────────────────────────────
     normalized_requirements:  Annotated[List[dict], lambda old, new: new]  # NormalizedReq structs
     clusters_summary:         str          # human-readable cluster table
-    multi_req_findings:       str          # formatted comparator report
+    consistency_findings:       str          # formatted comparator report
     multi_req_stats:          Annotated[dict, lambda old, new: new]  # counts: pairs, contradictions…
     messages:                 Annotated[list, add_messages]
 
@@ -100,8 +90,6 @@ class ValidationState(TypedDict):
     traceability_findings:    Annotated[dict, lambda old, new: {**old, **new}]
     correctness_findings:     Annotated[dict, lambda old, new: {**old, **new}]
     wording_findings:         Annotated[dict, lambda old, new: {**old, **new}]
-    # ── Cross-requirement findings (single string — inherently bulk) ──────
-    consistency_findings:     str
     # ── Per-requirement rewrites (dict keyed by req_id) ──────────────────
     recommendations:          Annotated[dict, lambda old, new: {**old, **new}]
     # ── Final output ─────────────────────────────────────────────────────
@@ -109,7 +97,7 @@ class ValidationState(TypedDict):
     # ── Multi-requirement pipeline ────────────────────────────────────────
     normalized_requirements:  Annotated[List[dict], lambda old, new: new]
     clusters_summary:         str
-    multi_req_findings:       str
+    consistency_findings:       str
     multi_req_stats:          Annotated[dict, lambda old, new: new]
     messages:                 Annotated[list, add_messages]
 
@@ -262,8 +250,6 @@ def orchestrator_agent(state: ValidationState) -> ValidationState:
 
     Phase 1 — Semantic enrichment (LLM):
       • Infers requirement type (functional / safety / performance / …).
-      • Detects ambiguous terms in each statement.
-      • Identifies compound requirements (multiple "shall" obligations).
 
     The LLM receives already-structured input and never needs to parse format.
     """
@@ -313,7 +299,6 @@ def orchestrator_agent(state: ValidationState) -> ValidationState:
     #TODO: the req type should be provided by a dedicated field...
     
     rag_hint       = _rag_block("system functions components interfaces naming conventions", k=4)
-    ambiguous_list = ", ".join(AMBIGUOUS_TERMS)
 
     # Build a compact input for the LLM — only what it needs to enrich
     llm_input_items = []
@@ -334,15 +319,11 @@ def orchestrator_agent(state: ValidationState) -> ValidationState:
 The requirements below have already been loaded from a JSON file.
 All IDs, statement text, verification methods, and rationale are already extracted.
 
-Your ONLY task is SEMANTIC ENRICHMENT — add three fields per requirement:
+Your ONLY task is SEMANTIC ENRICHMENT — add one field per requirement:
   1. type                  — classify as one of:
                              "functional" | "safety" | "performance" |
                              "interface" | "environmental" | "derived"
-  2. ambiguous_terms_found — list any ambiguous/subjective terms found in the
-                             STATEMENT from this list: {ambiguous_list}
-                             (empty list [] if none)
-  3. compound              — true if the STATEMENT contains more than one distinct
-                             "shall" obligation; false otherwise
+
 {rag_hint}
 Return a JSON ARRAY with one object per requirement.
 Each object must have EXACTLY these fields (copy id/title/text/
@@ -350,7 +331,7 @@ verification_method/rationale verbatim — do not alter them):
 
   "id", "title", "text", "verification_method", "rationale",
   "has_identifier", "has_verification_method", "has_source", "has_dal",
-  "modal_verb", "type", "ambiguous_terms_found", "compound"
+  "modal_verb", "type"
 
 For the boolean and modal_verb fields, use the values provided in the
 pre-loaded data below (do not recompute them — just copy them through).
@@ -376,7 +357,7 @@ Return ONLY valid JSON — no markdown fences, no commentary."""
     response = llm.invoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=(
-            f"Pre-loaded requirements (add type, ambiguous_terms_found, compound):\n\n"
+            f"Pre-loaded requirements (add type ):\n\n"
             f"{pre_json}"
         ))
     ])
@@ -394,12 +375,11 @@ Return ONLY valid JSON — no markdown fences, no commentary."""
                           "has_dal","modal_verb"):
                 req.setdefault(field, pp.get(field, ""))
             req.setdefault("type", "functional")
-            req.setdefault("ambiguous_terms_found", [])
-            req.setdefault("compound", False)
+
     except json.JSONDecodeError:
         # Fallback: use pre-loaded data directly with type defaulting to functional
         requirements = [
-            {**r, "type": "functional", "ambiguous_terms_found": [], "compound": False}
+            {**r, "type": "functional"}
             for r in pre_loaded
         ]
 
@@ -419,8 +399,8 @@ Return ONLY valid JSON — no markdown fences, no commentary."""
 def _run_per_req(
     state: ValidationState,
     agent_label: str,
-    system_prompt_fn,          # callable(req, rag_ctx) → system_prompt str
-    human_msg_fn,              # callable(req, rag_ctx) → human_message str
+    system_prompt_fn,
+    human_msg_fn, 
     result_key: str,
 ) -> dict:
     """
@@ -458,15 +438,49 @@ def _run_per_req(
     _emit("agent_done", label=agent_label)
     return {result_key: out}
 
+# ─────────────────────────────────────────────
+# Agent 2: Wording & Morphology  — per req
+# ─────────────────────────────────────────────
+
+def wording_agent(state: ValidationState) -> ValidationState:
+    """
+    Dedicated wording and sentence morphology agent.
+    Checks all wording and morphology rules from rules.json per requirement.
+    One LLM call per requirement.
+    Generated instructions and output format are derived entirely from rules.json.
+    """
+
+    instructions = format_instructions()
+
+    def sys_fn(req, rag_ctx):
+        return f"""You are an {STANDARD} wording and sentence morphology auditor.
+
+{_severity_legend()}
+
+{instructions}
+{rag_ctx}
+
+INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT for wording and morphology only.
+
+OUTPUT FORMAT — use EXACTLY this structure:
+{wording_output_fmt}"""
+
+    def human_fn(req, rag_ctx):
+        return (
+            f"Perform wording and morphology analysis on this single requirement:\n\n"
+            f"{json.dumps(req, indent=2)}"
+        )
+
+    return _run_per_req(state, "Wording & Morphology", sys_fn, human_fn, "wording_findings")
+
 
 # ─────────────────────────────────────────────
-# Agent 2: Completeness  (§5.3)  — per req
+# Agent 3: Completeness  (§5.3)  — per req
 # ─────────────────────────────────────────────
 
 def completeness_agent(state: ValidationState) -> ValidationState:
     """ARP4754A §5.3 — Completeness. One LLM call per requirement."""
     rules_text = format_rules_for_prompt("completeness")
-    wording    = format_wording_for_prompt()
 
     output_fmt   = format_output_format("completeness")
     instructions = format_instructions("completeness")
@@ -484,7 +498,6 @@ def completeness_agent(state: ValidationState) -> ValidationState:
 COMPLETENESS RULES (from rules.json):
 {rules_text}
 
-{wording}
 {rag_ctx}
 {_sys_ctx(state)}
 
@@ -498,53 +511,6 @@ OUTPUT FORMAT (use exactly):
         return f"Perform completeness analysis on this single requirement:\n\n{json.dumps(req, indent=2)}"
 
     return _run_per_req(state, "Completeness §5.3", sys_fn, human_fn, "completeness_findings")
-
-
-# ─────────────────────────────────────────────
-# Agent 3: Consistency  (§5.4)  — BULK (cross-req by nature)
-# ─────────────────────────────────────────────
-
-def consistency_agent(state: ValidationState) -> ValidationState:
-    """ARP4754A §5.4 — Consistency. Bulk call — cross-requirement analysis."""
-    print("  [Consistency §5.4]")
-    _emit("agent_start", label="Consistency §5.4")
-    llm        = get_llm()
-    rules_text = format_rules_for_prompt("consistency")
-    dal_text   = "\n".join(f"  DAL-{k}: {v}" for k, v in DAL_LEVELS.items())
-    rag_ctx    = _rag_block(
-        "DAL levels FHA failure conditions safety architecture performance "
-        "budgets timing latency power consumption units", k=5
-    )
-
-    system_prompt = f"""You are an {STANDARD} §5.4 consistency auditor for aerospace systems.
-
-{_severity_legend()}
-
-CONSISTENCY RULES (from rules.json):
-{rules_text}
-
-DAL LEVEL DEFINITIONS:
-{dal_text}
-{rag_ctx}
-{_sys_ctx(state)}
-
-INSTRUCTIONS — analyse the FULL SET of requirements together:
-{format_consistency_instructions()}
-
-OUTPUT FORMAT (use exactly):
-{format_consistency_output_format()}"""
-
-    req_text = json.dumps(state["requirements"], indent=2)
-    _emit("req_progress", current=0, total=len(state["requirements"]), label="Consistency §5.4")
-    response = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Perform consistency analysis:\n\n{req_text}"),
-    ])
-    _emit("req_progress", current=len(state["requirements"]),
-          total=len(state["requirements"]), label="Consistency §5.4")
-    _emit("agent_done", label="Consistency §5.4")
-    return {"consistency_findings": response.content}
-
 
 # ─────────────────────────────────────────────
 # Agent 4: Verifiability  (§5.5)  — per req
@@ -662,46 +628,6 @@ OUTPUT FORMAT (use exactly):
 
     return _run_per_req(state, "Correctness §5.2", sys_fn, human_fn, "correctness_findings")
 
-
-# ─────────────────────────────────────────────
-# Agent 7: Wording & Morphology  — per req  (NEW)
-# ─────────────────────────────────────────────
-
-def wording_agent(state: ValidationState) -> ValidationState:
-    """
-    Dedicated wording and sentence morphology agent.
-    Checks all wording and morphology rules from rules.json per requirement.
-    One LLM call per requirement.
-    Generated instructions and output format are derived entirely from rules.json.
-    """
-    wording_ref = format_wording_for_prompt()
-
-    wording_instructions = format_wording_instructions()
-    wording_output_fmt   = format_wording_output_format()
-
-    def sys_fn(req, rag_ctx):
-        if len(rag_ctx) < 10:
-            return "wording requirements vocabulary ambiguous terms morphology"
-        return f"""You are an {STANDARD} wording and sentence morphology auditor.
-
-{_severity_legend()}
-
-{wording_ref}
-{rag_ctx}
-
-INSTRUCTIONS — analyse THIS SINGLE REQUIREMENT for wording and morphology only.
-{wording_instructions}
-
-OUTPUT FORMAT — use EXACTLY this structure:
-{wording_output_fmt}"""
-
-    def human_fn(req, rag_ctx):
-        return (
-            f"Perform wording and morphology analysis on this single requirement:\n\n"
-            f"{json.dumps(req, indent=2)}"
-        )
-
-    return _run_per_req(state, "Wording & Morphology", sys_fn, human_fn, "wording_findings")
 
 
 # ─────────────────────────────────────────────
@@ -978,7 +904,7 @@ VALIDATION STATUS: [PASS / CONDITIONAL PASS / FAIL]
 
     llm_user = (
         f"CONSISTENCY (§5.4 — bulk):\n{consist}\n\n"
-        f"MULTI-REQ:\n{state.get('multi_req_findings', 'Not run.')}\n\n"
+        f"MULTI-REQ:\n{state.get('consistency_findings', 'Not run.')}\n\n"
         f"PER-REQ FINDINGS SUMMARY:\n{findings_summary}"
     )
 
@@ -1055,9 +981,9 @@ VALIDATION STATUS: [PASS / CONDITIONAL PASS / FAIL]
     # ── Section 4: Multi-req findings ────────────────────────────────────
     multi_block = (
         DIV
-        + "  MULTI-REQUIREMENT ANALYSIS  (contradictions / overlaps / redundancies)\n"
+        + "  CONSISTENCY ANALYSIS  (contradictions / overlaps / redundancies)\n"
         + "═" * W + "\n"
-        + (state.get("multi_req_findings") or "Not run.")
+        + (state.get("mconsistency_findings") or "Not run.")
     )
 
     # ── Section 5: Clusters ───────────────────────────────────────────────
@@ -1085,7 +1011,7 @@ VALIDATION STATUS: [PASS / CONDITIONAL PASS / FAIL]
 # Multi-Requirement Analysis Node
 # ─────────────────────────────────────────────
 
-def multi_req_agent(state: ValidationState) -> ValidationState:
+def consistency_agent(state: ValidationState) -> ValidationState:
     """
     LangGraph node wrapping the full 4-phase multi-requirement pipeline.
     Runs after all single-requirement agents.
@@ -1100,7 +1026,7 @@ def multi_req_agent(state: ValidationState) -> ValidationState:
     return {
         "normalized_requirements": result["normalized_requirements"],
         "clusters_summary":        result["clusters_summary"],
-        "multi_req_findings":      result["multi_req_findings"],
+        "consistency_findings":      result["consistency_findings"],
         "multi_req_stats":         result["pipeline_stats"],
     }
 
@@ -1114,25 +1040,23 @@ def build_validation_graph() -> StateGraph:
     workflow = StateGraph(ValidationState)
 
     workflow.add_node("orchestrator",  orchestrator_agent)
+    workflow.add_node("wording",       wording_agent) 
     workflow.add_node("completeness",  completeness_agent)
     workflow.add_node("consistency",   consistency_agent)
     workflow.add_node("verifiability", verifiability_agent)
     workflow.add_node("traceability",  traceability_agent)
     workflow.add_node("correctness",   correctness_agent)
-    workflow.add_node("wording",       wording_agent)       # ← NEW
-    workflow.add_node("multi_req",     multi_req_agent)
     workflow.add_node("recommender",   recommender_agent)
     workflow.add_node("reporter",      reporter_agent)
 
     workflow.set_entry_point("orchestrator")
-    workflow.add_edge("orchestrator",  "completeness")
+    workflow.add_edge("orchestrator",  "wording")
+    workflow.add_edge("wording",   "completeness")
     workflow.add_edge("completeness",  "consistency")
     workflow.add_edge("consistency",   "verifiability")
     workflow.add_edge("verifiability", "traceability")
     workflow.add_edge("traceability",  "correctness")
-    workflow.add_edge("correctness",   "wording")           # ← NEW edge
-    workflow.add_edge("wording",       "multi_req")
-    workflow.add_edge("multi_req",     "recommender")
+    workflow.add_edge("correctness",     "recommender")
     workflow.add_edge("recommender",   "reporter")
     workflow.add_edge("reporter",      END)
 

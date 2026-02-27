@@ -145,21 +145,8 @@ def main(
     n_reqs = len(_reqs)
 
     # ── Validate with live progress ────────────────────────────────────────
-    #
-    # Two progress bars:
-    #
-    #   [1] Per-requirement analysis
-    #       Total = 6 agents × n_reqs  (completeness, consistency, verifiability,
-    #       traceability, correctness each do 1 bulk LLM call = 1 agent-pass;
-    #       recommender loops per requirement = n_reqs calls)
-    #       We advance by n_reqs each time an agent finishes.
-    #
-    #   [2] Multi-req pair comparison
-    #       Total is unknown until clustering runs; we initialise to n_reqs*(n_reqs-1)//2
-    #       (worst-case) and correct it when the first pair_progress event arrives.
-    #       Advances by batch of 8 pairs after each comparator LLM call.
 
-    N_SINGLE_REQ_AGENTS = 7            # completeness, verif, trace, correctness, wording, recommender + consistency(bulk)
+    N_SINGLE_REQ_AGENTS = 6            # completeness, verif, trace, correctness, wording, recommender 
     req_total  = N_SINGLE_REQ_AGENTS * n_reqs
     pair_total = max(n_reqs * (n_reqs - 1) // 2, 1)
 
@@ -266,14 +253,13 @@ def main(
         sections = [
             ("Parsed Requirements (Orchestrator)",    _fmt(result.get("requirements", []))),
             ("System Context (from RAG)",             result.get("system_context", "") or "[No RAG context]"),
-            ("§5.3 Completeness Findings",            result.get("completeness_findings", "")),
-            ("§5.4 Consistency Findings",             result.get("consistency_findings", "")),
-            ("§5.5 Verifiability Findings",           result.get("verifiability_findings", "")),
-            ("§5.6 Traceability Findings",            result.get("traceability_findings", "")),
-            ("§5.2 Correctness Findings",             result.get("correctness_findings", "")),
+            ("Completeness Findings",                 result.get("completeness_findings", "")),
+            ("Verifiability Findings",                result.get("verifiability_findings", "")),
+            ("Traceability Findings",                 result.get("traceability_findings", "")),
+            ("Correctness Findings",                  result.get("correctness_findings", "")),
             ("Corrected Rewrites (Recommender)",      result.get("recommendations", "")),
-            ("Multi-Req Clusters",                    result.get("clusters_summary", "")),
-            ("Multi-Req Findings",                    result.get("multi_req_findings", "")),
+            ("Consistency Clusters",                    result.get("clusters_summary", "")),
+            ("Consistency Findings",                    result.get("multi_req_findings", "")),
         ]
         for title, content in sections:
             console.print(Panel(
